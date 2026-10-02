@@ -27,3 +27,16 @@ services:
     volumes:
       - "../:/home/build/lcs-recomp/"
       - "./ccache-debian/:/home/build/.ccache/"
+  build-windows:
+    image: "lcs-native:windows-msvc"
+    build:
+      context: "."
+      dockerfile: "windows-msvc.Dockerfile"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      HOME: /tmp
+    working_dir: /src
+    volumes:
+      - "../:/src/"
+      - "./ccache-windows/:/ccache/"
+    command: ["bash", "/src/docker/compile_windows.sh"]
