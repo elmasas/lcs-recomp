@@ -2,24 +2,29 @@ set(FFMPEG_LIBS avcodec avformat avutil swresample swscale)
 set(FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg)
 
 file(GLOB HOST_SOURCES CONFIGURE_DEPENDS host/*.cpp)
-list(REMOVE_ITEM HOST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/host/pack_font5x7.cpp)
-add_executable(LCSNative ${HOST_SOURCES})
-target_include_directories(LCSNative PRIVATE host)
+list(REMOVE_ITEM HOST_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/host/pack_font5x7.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/host/main.cpp)
+# Share the real HLE implementations with the save-protection integration test.
+add_library(lcs_host OBJECT ${HOST_SOURCES})
+add_executable(LCSNative host/main.cpp)
+target_link_libraries(LCSNative PRIVATE lcs_host)
+target_include_directories(lcs_host PUBLIC host)
 if(WIN32)
-    target_include_directories(LCSNative PRIVATE ${FFMPEG_DIR}/include)
+    target_include_directories(lcs_host PRIVATE ${FFMPEG_DIR}/include)
 endif()
-target_link_libraries(LCSNative PRIVATE psprecomp_core)
+target_link_libraries(lcs_host PUBLIC psprecomp_core)
 
 if(MSVC)
-    target_compile_options(LCSNative PRIVATE /W4 /permissive- /EHsc)
+    target_compile_options(lcs_host PUBLIC /W4 /permissive- /EHsc)
     target_link_options(LCSNative PRIVATE /STACK:67108864)
 endif()
 
 if(WIN32)
     target_sources(LCSNative PRIVATE resources/LCSNative.rc)
-    target_link_libraries(LCSNative PRIVATE gdi32 user32 winmm d3d12 dxgi d3dcompiler dxguid)
+    target_link_libraries(lcs_host PUBLIC gdi32 user32 winmm d3d12 dxgi d3dcompiler dxguid)
     foreach(lib ${FFMPEG_LIBS})
-        target_link_libraries(LCSNative PRIVATE ${FFMPEG_DIR}/lib/${lib}.lib)
+        target_link_libraries(lcs_host PUBLIC ${FFMPEG_DIR}/lib/${lib}.lib)
     endforeach()
     add_custom_command(TARGET LCSNative POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${FFMPEG_DIR}/bin $<TARGET_FILE_DIR:LCSNative>)
@@ -38,8 +43,8 @@ else()
     pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
     pkg_check_modules(VULKAN REQUIRED IMPORTED_TARGET vulkan)
     find_package(Threads REQUIRED)
-    target_compile_definitions(LCSNative PRIVATE LCS_VULKAN_GE_BACKEND=1)
-    target_link_libraries(LCSNative PRIVATE
+    target_compile_definitions(lcs_host PRIVATE LCS_VULKAN_GE_BACKEND=1)
+    target_link_libraries(lcs_host PUBLIC
         PkgConfig::FFMPEG PkgConfig::SDL2 PkgConfig::VULKAN Threads::Threads)
     # ge_spv.hpp is produced here so an edit to a shader is what the binary runs.
     find_program(LCS_GLSLANG NAMES glslangValidator glslang REQUIRED)
@@ -63,7 +68,7 @@ else()
         COMMENT "Compiling Vulkan GE shaders"
         VERBATIM)
     add_custom_target(lcs_ge_spirv DEPENDS ${LCS_GE_SPV_HEADER})
-    add_dependencies(LCSNative lcs_ge_spirv)
+    add_dependencies(lcs_host lcs_ge_spirv)
     # pack_font5x7 turns host/font5x7.txt into the F10 menu font. Windows skips this.
     add_executable(lcs_pack_font5x7 host/pack_font5x7.cpp)
     set_target_properties(lcs_pack_font5x7 PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -76,10 +81,10 @@ else()
         COMMENT "Packing host menu font"
         VERBATIM)
     add_custom_target(lcs_host_font DEPENDS ${LCS_FONT_HEADER})
-    add_dependencies(LCSNative lcs_host_font)
+    add_dependencies(lcs_host lcs_host_font)
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/host/display_window_sdl.cpp
         PROPERTIES OBJECT_DEPENDS ${LCS_FONT_HEADER})
-    target_include_directories(LCSNative BEFORE PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+    target_include_directories(lcs_host BEFORE PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/host/ge_gpu_backend_vulkan.cpp
         PROPERTIES OBJECT_DEPENDS ${LCS_GE_SPV_HEADER})
     # Some linkers do not resolve the shared libraries FFmpeg itself depends on.
@@ -98,7 +103,7 @@ int main() { return avformat_version() == 0; }
             check_cxx_source_compiles("${_lcs_ffmpeg_probe}" LCS_FFMPEG_LINKS_WITH_LIBDIR)
             unset(CMAKE_REQUIRED_LINK_OPTIONS)
             if(LCS_FFMPEG_LINKS_WITH_LIBDIR)
-                target_link_options(LCSNative PRIVATE "-Wl,-rpath-link,${LCS_FFMPEG_LIBDIR}")
+                target_link_options(lcs_host PUBLIC "-Wl,-rpath-link,${LCS_FFMPEG_LIBDIR}")
             endif()
         endif()
     endif()
@@ -133,3 +138,15 @@ if(WIN32)
 else()
     target_link_libraries(lcs_host_menu_test PRIVATE PkgConfig::SDL2 Threads::Threads)
 endif()
+
+if(PSPRECOMP_BUILD_TESTS)
+    add_executable(lcs_stress_controller_test
+        ${CMAKE_SOURCE_DIR}/tests/lcs_stress_controller_test.cpp
+        host/lcs_stress_controller.cpp)
+    target_include_directories(lcs_stress_controller_test PRIVATE host ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME lcs_stress_controller_test COMMAND lcs_stress_controller_test)
+    add_executable(lcs_stress_safety_test ${CMAKE_SOURCE_DIR}/tests/lcs_stress_safety_test.cpp)
+    target_link_libraries(lcs_stress_safety_test PRIVATE lcs_host)
+    add_test(NAME lcs_stress_safety_test COMMAND lcs_stress_safety_test)
+endif()
+

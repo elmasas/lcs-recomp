@@ -12,6 +12,7 @@
 #include "lcs_frame_limit.hpp"
 #include "lcs_lang.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_stress_test.hpp"
 
 #include "psprecomp/common.hpp"
 
@@ -779,6 +780,7 @@ bool write_guest_file(psprecomp::Runtime &runtime, const std::filesystem::path &
                       std::uint32_t buffer, std::uint32_t size) {
     if (size == 0u) return true;
     if (buffer == 0u || !runtime.memory().contains(buffer, size)) return false;
+    if (stress_test_enabled()) { stress_test_note_blocked_write(); return false; }
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) return false;
@@ -915,7 +917,7 @@ std::uint32_t query_savedata_sizes(psprecomp::Runtime &runtime, std::uint32_t pa
     constexpr std::uint32_t cluster_size = 32u * 1024u;
     const auto root = savedata_root(runtime);
     std::error_code error;
-    std::filesystem::create_directories(root, error);
+    if (!stress_test_enabled()) std::filesystem::create_directories(root, error);
     const auto space = std::filesystem::space(root, error);
     const std::uint64_t available = error ? 512ull * 1024ull * 1024ull : space.available;
     const std::uint64_t free_clusters = available / cluster_size;
@@ -952,6 +954,10 @@ std::uint32_t query_savedata_sizes(psprecomp::Runtime &runtime, std::uint32_t pa
 
 std::uint32_t execute_savedata_operation(psprecomp::Runtime &runtime, std::uint32_t parameter_address) {
     const std::uint32_t mode = runtime.memory().load32(parameter_address + kSavedataModeOffset);
+    if (stress_test_enabled() && stress_savedata_mutates(mode)) {
+        stress_test_note_blocked_write();
+        return 0x80110385u;
+    }
     const std::string file_name_value = safe_savedata_component(read_fixed_string(
         runtime.memory(), parameter_address + kSavedataFileNameOffset, 13u));
     const std::string file_name = file_name_value.empty() ? "DATA.BIN" : file_name_value;
@@ -1817,6 +1823,25 @@ void present_frame(psprecomp::Runtime &rt, const PresentRequest &request) {
             display_window_present_rgba(rgba, gpu.offscreen_width, gpu.offscreen_height);
             ge_gpu_backend_mark_window_presented();
             presented_gpu_frame = true;
+        }
+    }
+    stress_test_present(rt, present_buffer, present_stride, request.pixel_format);
+    if (std::getenv("LCS_PRESENT_DIAG") != nullptr) {
+        static std::uint64_t gpu_presents = 0u, software_presents = 0u;
+        if (presented_gpu_frame) ++gpu_presents; else ++software_presents;
+        if (((gpu_presents + software_presents) % 120u) == 0u) {
+            const std::span<const std::byte> frame = ge_gpu_backend_game_frame_rgba();
+            std::size_t non_black = 0u;
+            for (std::size_t index = 0u; index + 3u < frame.size(); index += 4u) {
+                if (frame[index] != std::byte{0} || frame[index + 1u] != std::byte{0} ||
+                    frame[index + 2u] != std::byte{0})
+                    ++non_black;
+            }
+            std::cerr << "[present] gpu=" << gpu_presents
+                      << " software=" << software_presents
+                      << " direct=" << ge_gpu_backend_presents_directly()
+                      << " readback_bytes=" << frame.size()
+                      << " non_black=" << non_black << "\n";
         }
     }
     if (!presented_gpu_frame) {
@@ -2833,6 +2858,12 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     runtime.register_hle("IoFileMgrForUser", 0x109F50BCu,
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             const std::string path = rt.memory().read_c_string(ctx.gpr[4]);
+            // Reject write/create/truncate/append before opening any native path.
+            if (stress_test_enabled() && (ctx.gpr[5] & (0x0002u | 0x0100u | 0x0200u | 0x0400u)) != 0u) {
+                stress_test_note_blocked_write();
+                ctx.set_gpr(2, 0x8001000Du);
+                return;
+            }
 
             if (path.rfind("disc0:/sce_lbn0x", 0u) == 0u) {
                 const auto size_marker = path.find("_size0x");
@@ -2951,6 +2982,11 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
 
     runtime.register_hle("IoFileMgrForUser", 0x42EC03ACu,
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            if (stress_test_enabled()) {
+                stress_test_note_blocked_write();
+                ctx.set_gpr(2, 0x8001000Du);
+                return;
+            }
             const auto fd = static_cast<std::int32_t>(ctx.gpr[4]);
             const std::uint32_t src = ctx.gpr[5];
             const std::uint32_t size = ctx.gpr[6];
@@ -3161,7 +3197,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 ctx.set_gpr(2, 0x80000103u);
                 return;
             }
-            const HostInputState host = display_window_input();
+            const HostInputState host = stress_test_enabled()
+                ? stress_test_input(rt, {}) : display_window_input();
             const std::uint32_t buttons = host.buttons;
             for (std::uint32_t index = 0u; index < count; ++index) {
                 const std::uint32_t sample = destination + index * sample_size;

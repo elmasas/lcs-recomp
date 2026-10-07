@@ -13,8 +13,8 @@ namespace {
 
 std::atomic<int> g_axis_x{0};
 std::atomic<int> g_axis_y{0};
-std::atomic<bool> g_host_accelerate{false};
-std::atomic<bool> g_host_brake{false};
+std::atomic<std::uint8_t> g_host_accelerate{0};
+std::atomic<std::uint8_t> g_host_brake{0};
 std::atomic<std::int64_t> g_last_vehicle_read_ms{0};
 std::atomic<std::int64_t> g_last_camera_read_ms{0};
 std::atomic<std::int64_t> g_last_mouse_camera_ms{0};
@@ -209,12 +209,13 @@ std::uint32_t lcs_brake_pad_offset() noexcept {
     return modern_scheme() ? kPadLeftShoulder : kPadSquare;
 }
 
-bool lcs_host_accelerate() noexcept { return g_host_accelerate.load(std::memory_order_relaxed); }
-bool lcs_host_brake() noexcept { return g_host_brake.load(std::memory_order_relaxed); }
+std::uint8_t lcs_host_accelerate() noexcept { return g_host_accelerate.load(std::memory_order_relaxed); }
+std::uint8_t lcs_host_brake() noexcept { return g_host_brake.load(std::memory_order_relaxed); }
 
-void lcs_set_host_drive_inputs(bool accelerate, bool brake) noexcept {
-    g_host_accelerate.store(accelerate, std::memory_order_relaxed);
-    g_host_brake.store(brake, std::memory_order_relaxed);
+void lcs_set_host_drive_inputs(bool accelerate, bool brake,
+                               std::uint8_t throttle, std::uint8_t brake_pressure) noexcept {
+    g_host_accelerate.store(accelerate ? 255u : throttle, std::memory_order_relaxed);
+    g_host_brake.store(brake ? 255u : brake_pressure, std::memory_order_relaxed);
 }
 
 void lcs_note_vehicle_control_read() noexcept {

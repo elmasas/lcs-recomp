@@ -6,10 +6,12 @@
 #include "lcs_audio_output.hpp"
 #include "ge_gpu_backend.hpp"
 #include "ge_renderer.hpp"
+#include "lcs_stress_test.hpp"
 #include "lcs_render_config.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -26,9 +28,22 @@ int main(int argc, char **argv) {
     std::filesystem::path game_root = "game";
     std::uint64_t max_dispatches = std::numeric_limits<std::uint64_t>::max();
     double max_seconds = 0.0;
+    bool max_seconds_supplied = false;
+    bool stress = false, stress_driving = false;
+    std::filesystem::path stress_output = "out/stress-results";
+    std::filesystem::path stress_direct;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
-        if (arg == "--game" && i + 1 < argc) {
+        if (arg == "--stress-test") {
+            stress = true;
+        } else if (arg == "--stress-driving") {
+            stress = stress_driving = true;
+        } else if (arg == "--stress-output" && i + 1 < argc) {
+            stress_output = argv[++i];
+        } else if (arg == "--stress-direct" && i + 1 < argc) {
+            stress = true;
+            stress_direct = argv[++i];
+        } else if (arg == "--game" && i + 1 < argc) {
             game_root = argv[++i];
             elf_path = game_root / "EBOOT.ELF";
         } else if (arg == "--elf" && i + 1 < argc) {
@@ -36,12 +51,24 @@ int main(int argc, char **argv) {
         } else if ((arg == "--max-dispatches" || arg == "--dispatch-cap") && i + 1 < argc) {
             max_dispatches = std::strtoull(argv[++i], nullptr, 0);
         } else if (arg == "--max-seconds" && i + 1 < argc) {
-            max_seconds = std::strtod(argv[++i], nullptr);
+            max_seconds_supplied = true;
+            char *end = nullptr;
+            const char *value = argv[++i];
+            max_seconds = std::strtod(value, &end);
+            if (end == value || *end != '\0') {
+                std::cerr << "Invalid --max-seconds\n";
+                return 2;
+            }
         } else {
             std::cerr << "Ignoring unrecognised argument \"" << arg << "\"\n";
         }
     }
 
+    if (stress && !max_seconds_supplied) max_seconds = 600.0;
+    if (stress && (!std::isfinite(max_seconds) || max_seconds <= 0.0)) {
+        std::cerr << "Stress test requires a positive finite --max-seconds\n";
+        return 2;
+    }
     try {
         std::error_code executable_error;
         const std::filesystem::path executable_directory =
@@ -81,6 +108,8 @@ int main(int argc, char **argv) {
             std::cerr << "[ge] GPU backend unavailable: " << gpu_backend_error << "\n";
         lcs::display_window_attach_gpu_backend();
         lcs::set_wall_clock_limit(max_seconds);
+        lcs::stress_test_init(stress, stress_driving, stress_output);
+        if (!stress_direct.empty()) lcs::stress_test_set_direct(stress_direct);
 
         if (const auto module = elf.find_module_info(runtime.memory(), psprecomp::kDefaultPspUserLoadBase)) {
             runtime.cpu().set_gpr(28, module->gp);
@@ -100,6 +129,9 @@ int main(int argc, char **argv) {
             std::cout << "Runtime stopped: " << runtime.stop_reason() << "\n";
         }
         lcs::audio_output_shutdown();
+        const bool completed_duration = runtime.stopped() &&
+            runtime.stop_reason().rfind("Wall-clock limit reached", 0) == 0;
+        if (!lcs::stress_test_finish(completed_duration)) return 2;
     } catch (const std::exception &ex) {
         std::cerr << "LCSNative error: " << ex.what() << "\n";
         return 1;

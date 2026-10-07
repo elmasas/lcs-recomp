@@ -130,3 +130,89 @@ That way you will get a pre-confugred build environment which also utilzes [ccac
 ## License
 
 MIT, see [`LICENSE`](LICENSE). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
+
+## Unattended engine stress test
+
+Build first (see [Linux](#linux)), then run a ten-minute test without keyboard or
+controller input:
+
+```bash
+python3 lcs/scripts/stress_test.py --seconds 600
+```
+
+The runner loads a disposable copy of your existing saves, copies your settings,
+checks that the original save contents stay unchanged, and kills the process if
+it exceeds the deadline. It leaves logs in `out/stress/<timestamp>/`. Your current
+render settings are used; this is suitable for exercising increased draw distance,
+population, and resolution without editing the configuration.
+
+The native controller and save-protection tests are built with the project and
+run through CTest:
+
+```bash
+ninja -C out/lcs-linux
+ctest --test-dir out/lcs-linux -R lcs_stress
+```
+
+The character runs, turns, jumps, and sweeps the camera. Position samples detect
+obstacles and trigger backing up and turning. Add `--driving` to attempt to enter
+nearby vehicles and drive; that run only succeeds if driving movement is actually
+observed. This is exploration, so it does not guarantee a particular route or
+mission completion. Game menus suspend movement and receive cancel pulses to escape incidental
+save prompts. The test fails if gameplay cannot
+start within 120 seconds, movement stays blocked for 60 seconds, or gameplay is
+unavailable for 120 seconds.
+
+Test mode rejects **all guest file writes**, write-capable file opens, and save
+or delete operations. Existing saves can still be read. The runner adds isolation
+as a second protection. It never asks the game to save.
+
+Artifacts include `runtime.log`, `movement.csv`, `summary.json`, and `runner.json`
+(with peak resident memory and the save comparison). Movement success requires
+at least five moving samples and ten game units of travel, plus a normal timed
+stop. Presentation interval statistics include startup/loading and are not GPU
+render timings. PPM screenshots are captured every 15 seconds with software or
+GPU readback presentation; direct Vulkan/DX12 swapchain presentation has no CPU
+pixels and does not produce these screenshots.
+
+You can also use the native options on Linux or Windows:
+
+```text
+LCSNative --game <game-root> --stress-test --max-seconds 600 --stress-output <new-output-directory>
+LCSNative --game <game-root> --stress-driving --max-seconds 1800 --stress-output <new-output-directory>
+```
+
+`--direct <directory>` writes `state.json` (position, facing, camera, arrived) about
+five times a second and reads `command.txt`. One line is `hold`, `shot`,
+`goto X Y [RADIUS]`, `stick AX AY BUTTONS`, `forward`, `run`, `back`, `left`, `right`,
+or `enter`. On foot, `goto` steers from the camera. In a vehicle it steers from the vehicle heading. `shot` may precede another command. A new `shot` line saves
+`shot-N.ppm` and `latest.ppm` from a CPU frame. A direct Vulkan or DX12
+swapchain has no CPU pixels, so that request writes `shot-unavailable.txt`
+instead. Standing still for a photograph does not trip the 60 second stall
+failure. The startup menu pulses still run until gameplay is ready.
+
+The optional arrival radius defaults to two game units; narrower doorway routes
+can use a smaller value. Nearby foot targets use walking speed. Direct state
+includes `vehicle_model`, plus a separate `bike_near`, `bike_x`, `bike_y`,
+`bike_z`, and `bike_model` target so a nearby car does not replace a garage bike.
+`vehicle_pitch` reports the driven vehicle's pitch in radians.
+`drive STEERING THROTTLE BRAKE [PITCH]` accepts independent 0–255 pressures,
+allowing steady throttle instead of alternating full acceleration and braking.
+Pitch defaults to 128 (neutral); 255 leans back without applying the brake.
+For a burnout turn, use `drive 255 255 255` to steer right with both pressures held.
+
+Native test mode blocks saving, but only the Python runner copies saves and
+configuration. Native runs default to 600 seconds if no duration is supplied.
+Exit code 0 means the run completed and movement was verified; 2 means incomplete
+coverage, startup/recovery failure, or an abnormal engine stop.
+
+## Manual QA
+
+The safehouse bike scenario is opt-in. It is never run on startup or by CTest:
+
+```bash
+python3 lcs/scripts/qa_safehouse_bike.py --record
+```
+
+No keyboard input is needed. See [the manual QA guide](lcs/QA.md) for
+the bike loop, stunts, recording prerequisites, and reports.

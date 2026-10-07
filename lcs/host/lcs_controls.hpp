@@ -17,9 +17,10 @@ void lcs_set_free_aim(bool active) noexcept;
 
 [[nodiscard]] std::uint32_t lcs_accelerate_pad_offset() noexcept;
 [[nodiscard]] std::uint32_t lcs_brake_pad_offset() noexcept;
-[[nodiscard]] bool lcs_host_accelerate() noexcept;
-[[nodiscard]] bool lcs_host_brake() noexcept;
-void lcs_set_host_drive_inputs(bool accelerate, bool brake) noexcept;
+[[nodiscard]] std::uint8_t lcs_host_accelerate() noexcept;
+[[nodiscard]] std::uint8_t lcs_host_brake() noexcept;
+void lcs_set_host_drive_inputs(bool accelerate, bool brake,
+                               std::uint8_t throttle = 0, std::uint8_t brake_pressure = 0) noexcept;
 void lcs_note_vehicle_control_read() noexcept;
 [[nodiscard]] bool lcs_player_in_vehicle() noexcept;
 
