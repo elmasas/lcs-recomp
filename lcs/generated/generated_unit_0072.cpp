@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_render_config.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -6243,6 +6244,8 @@ L_08927014:
     ctx.gpr[4] = (16968u << 16u);
     ctx.fpr[14] = std::bit_cast<float>(ctx.gpr[4]);
     ctx.fpr[13] = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[6] + static_cast<std::uint32_t>(228)));
+    // Car model range only. Spawn and removal stay unchanged.
+    ctx.fpr[13] = ctx.fpr[13] * lcs::view_distance_scale();
     ctx.gpr[4] = (17036u << 16u);
     ctx.gpr[5] = (17076u << 16u);
     ctx.fpr[15] = std::bit_cast<float>(ctx.gpr[4]);
