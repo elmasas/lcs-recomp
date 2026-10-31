@@ -27,6 +27,8 @@ struct HostInputState {
     int camera_y{};
     bool accelerate{};
     bool brake{};
+    std::uint8_t throttle{};
+    std::uint8_t brake_pressure{};
 };
 [[nodiscard]] HostInputState display_window_input();
 

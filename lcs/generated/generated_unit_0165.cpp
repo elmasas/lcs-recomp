@@ -1383,7 +1383,7 @@ L_08A980F0:
         if (driving) lcs::lcs_note_vehicle_control_read();
         std::int16_t accelerate = static_cast<std::int16_t>(
             aot_mem.aot_load16(ctx.gpr[4] + (driving ? lcs::lcs_accelerate_pad_offset() : 42u)));
-        if (driving && accelerate == 0 && lcs::lcs_host_accelerate()) accelerate = 255;
+        if (driving && accelerate == 0) accelerate = lcs::lcs_host_accelerate();
         ctx.gpr[2] = (static_cast<std::uint32_t>(static_cast<std::int32_t>(accelerate)));
     }
     goto L_08A980F4;

@@ -10032,7 +10032,7 @@ L_08A97F78:
         if (driving) lcs::lcs_note_vehicle_control_read();
         std::int16_t brake = static_cast<std::int16_t>(
             aot_mem.aot_load16(ctx.gpr[4] + (driving ? lcs::lcs_brake_pad_offset() : 38u)));
-        if (driving && brake == 0 && lcs::lcs_host_brake()) brake = 255;
+        if (driving && brake == 0) brake = lcs::lcs_host_brake();
         ctx.gpr[2] = (static_cast<std::uint32_t>(static_cast<std::int32_t>(brake)));
     }
     goto L_08A97F7C;
