@@ -6,3 +6,4 @@
 .vscode/
 /docker/ccache-*/
 /tools/__pycache__/
+/dist/
