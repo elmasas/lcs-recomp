@@ -7,3 +7,4 @@
 /docker/ccache-*/
 /tools/__pycache__/
 /dist/
+/lcs/config/textures/
