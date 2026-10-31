@@ -1,8 +1,10 @@
-"""Графический лаунчер LCS Recomp.
+"""Graphical LCS Recomp launcher.
 
-Вкладка «Игра» — выбор ISO и весь конвейер (PSP_GAME, EBOOT.ELF, регион).
-Вкладка «Управление» — два столбика: клавиши на ПК и кнопки геймпада, иконки
-клавиш, мыши, Xbox и PlayStation, возврат к настройкам по умолчанию.
+Game tab — pick an ISO and run the full pipeline (PSP_GAME, EBOOT.ELF, region).
+Controls tab — two columns: PC keys and gamepad buttons.
+Icon style: PlayStation, Xbox, or keyboard and mouse (table and in-game HUD).
+
+UI copy is English. Russian (and later locales) overlay the same keys via i18n.
 """
 
 from __future__ import annotations
@@ -20,9 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import button_icons
 import launcher
+import prompt_pack
+from i18n import t
 from lcs_controls_model import (
-    ACTIONS, ACTION_LABELS, HOST_KEYS, MAX_PER_BINDING, PAD_BUTTONS, PAD_ICON_TOKEN,
-    PAD_LABELS, STICK_ROLES, ControlsConfig, canonical_key_name, key_caption,
+    ACTIONS, HOST_KEYS, MAX_PER_BINDING, PAD_BUTTONS, PAD_ICON_TOKEN,
+    STICK_ROLES, ControlsConfig, action_labels, canonical_key_name, key_caption,
+    pad_labels, read_prompt_style, write_prompt_style,
 )
 
 APP_TITLE = "LCS Launcher — GTA Liberty City Stories"
@@ -30,8 +35,8 @@ KEY_HEIGHT = 26
 PAD_SIZE = 30
 LIST_BG = "#f6f6f6"
 
-# Собранному exe Windows сообщает реальный DPI, поэтому пиксельные размеры
-# иконок умножаются на масштаб экрана.
+# Frozen Windows builds report real DPI, so icon pixel sizes are multiplied by
+# the screen scale.
 SCALE = 1.0
 
 
@@ -49,7 +54,7 @@ def detect_scale(root: tk.Misc) -> float:
 
 
 def key_icon_width(caption: str, kind: str) -> int:
-    """Ширина иконки клавиши: крышка по подписи, мышь — квадрат плюс подпись."""
+    """Keycap width from caption length; mouse is a square plus the caption."""
     if kind == "key":
         return px(max(30, int(11 * len(caption)) + 12))
     return px(KEY_HEIGHT + 8) + int(7.5 * len(caption) * SCALE)
@@ -86,7 +91,7 @@ def key_name_from_event(event) -> str | None:
 
 
 class ScrollFrame(ttk.Frame):
-    """Вертикальный скролл списка; колесо мыши не перехватывается во время ввода."""
+    """Vertical list scroll; the mouse wheel is ignored while capturing a key."""
 
     def __init__(self, master, scroll_enabled=lambda: True):
         super().__init__(master)
@@ -118,49 +123,51 @@ class ScrollFrame(ttk.Frame):
 
 
 class GameTab(ttk.Frame):
-    """ISO -> PSP_GAME -> EBOOT.ELF -> запуск LCSNative.exe."""
+    """ISO -> PSP_GAME -> EBOOT.ELF -> launch LCSNative.exe."""
 
     def __init__(self, master):
         super().__init__(master, padding=10)
         self.messages: queue.Queue = queue.Queue()
         self.busy = False
         self.iso_var = tk.StringVar()
-        self.status_var = tk.StringVar(value="Выберите образ игры и нажмите «Обработать ISO».")
-        self.info_var = tk.StringVar(value="Игра ещё не подготовлена.")
+        self.status_var = tk.StringVar(value=t("Choose a game image and click Process ISO."))
+        self.info_var = tk.StringVar(value=t("Game is not ready yet."))
 
-        source = ttk.LabelFrame(self, text=" 1. Образ игры ", padding=10)
+        source = ttk.LabelFrame(self, text=t(" 1. Game image "), padding=10)
         source.pack(fill="x")
-        ttk.Label(source, text="ISO-файл игры:").grid(row=0, column=0, sticky="w")
+        ttk.Label(source, text=t("Game ISO file:")).grid(row=0, column=0, sticky="w")
         entry = ttk.Entry(source, textvariable=self.iso_var)
         entry.grid(row=0, column=1, sticky="we", padx=8)
-        ttk.Button(source, text="Обзор…", command=self.browse).grid(row=0, column=2)
+        ttk.Button(source, text=t("Browse…"), command=self.browse).grid(row=0, column=2)
         source.columnconfigure(1, weight=1)
         actions = ttk.Frame(source)
         actions.grid(row=1, column=0, columnspan=3, sticky="we", pady=(10, 0))
-        self.run_button = ttk.Button(actions, text="Обработать ISO", command=self.start)
+        self.run_button = ttk.Button(actions, text=t("Process ISO"), command=self.start)
         self.run_button.pack(side="left")
         self.progress = ttk.Progressbar(actions, maximum=100)
         self.progress.pack(side="left", fill="x", expand=True, padx=10)
         ttk.Label(actions, textvariable=self.status_var, wraplength=px(560),
                   foreground="#1a4f8a").pack(side="left")
 
-        ready = ttk.LabelFrame(self, text=" 2. Игра ", padding=10)
+        ready = ttk.LabelFrame(self, text=t(" 2. Game "), padding=10)
         ready.pack(fill="x", pady=(10, 0))
         ttk.Label(ready, textvariable=self.info_var, justify="left").pack(anchor="w")
         buttons = ttk.Frame(ready)
         buttons.pack(anchor="w", pady=(8, 0))
-        ttk.Button(buttons, text="Запустить игру", command=self.launch).pack(side="left")
-        ttk.Button(buttons, text="Открыть папку с игрой",
+        ttk.Button(buttons, text=t("Launch game"), command=self.launch).pack(side="left")
+        ttk.Button(buttons, text=t("Open game folder"),
                    command=self.open_folder).pack(side="left", padx=8)
         paths = ttk.Frame(self)
         paths.pack(fill="x", pady=(8, 0))
         exe = launcher.find_game_exe()
-        ttk.Label(paths, foreground="#555555", text=(
-            f"Игровой движок: {exe if exe else 'LCSNative.exe не найден — соберите проект'}\n"
-            f"Папка игры: {launcher.GAME_DIR}\n"
-            f"Файл настроек: {launcher.INI_PATH}")).pack(anchor="w")
+        ttk.Label(paths, foreground="#555555", text=t(
+            "Game engine: {exe}\nGame folder: {game}\nSettings file: {ini}",
+            exe=exe if exe else t("LCSNative.exe not found — build the project"),
+            game=launcher.GAME_DIR,
+            ini=launcher.INI_PATH,
+        )).pack(anchor="w")
 
-        log_box = ttk.LabelFrame(self, text=" Журнал ", padding=6)
+        log_box = ttk.LabelFrame(self, text=t(" Log "), padding=6)
         log_box.pack(fill="both", expand=True, pady=(10, 0))
         self.log = scrolledtext.ScrolledText(log_box, height=9, state="disabled",
                                              background="#1e1e1e", foreground="#d6d6d6")
@@ -170,8 +177,8 @@ class GameTab(ttk.Frame):
 
     def browse(self):
         path = filedialog.askopenfilename(
-            title="Выберите ISO игры", parent=self,
-            filetypes=[("Образы PSP", "*.iso *.cso *.pbp"), ("Все файлы", "*.*")])
+            title=t("Choose game ISO"), parent=self,
+            filetypes=[(t("PSP images"), "*.iso *.cso *.pbp"), (t("All files"), "*.*")])
         if path:
             self.iso_var.set(path)
 
@@ -186,16 +193,17 @@ class GameTab(ttk.Frame):
             return
         iso = Path(self.iso_var.get().strip('"').strip())
         if not iso.as_posix():
-            messagebox.showinfo("Нужен ISO", "Сначала выберите ISO-файл игры.", parent=self)
+            messagebox.showinfo(t("ISO required"), t("Choose a game ISO file first."), parent=self)
             return
         if not iso.exists():
-            messagebox.showerror("ISO не найден", f"Файл не найден:\n{iso}", parent=self)
+            messagebox.showerror(t("ISO not found"),
+                                 t("File not found:\n{path}", path=iso), parent=self)
             return
         self.busy = True
         self.run_button.state(["disabled"])
         self.progress["value"] = 0
-        self.status_var.set("Работаю…")
-        self.log_line(f"— Начало обработки: {iso.name}")
+        self.status_var.set(t("Working…"))
+        self.log_line(t("— Starting: {name}", name=iso.name))
         threading.Thread(target=self._worker, args=(iso,), daemon=True).start()
 
     def _worker(self, iso: Path) -> None:
@@ -204,7 +212,7 @@ class GameTab(ttk.Frame):
             self.messages.put(("done", info, None))
         except launcher.LauncherError as error:
             self.messages.put(("done", None, str(error)))
-        except Exception as error:  # показываем любое неожиданное исключение
+        except Exception as error:
             self.messages.put(("done", None, f"{type(error).__name__}: {error}"))
 
     def _report(self, message: str, percent=None) -> None:
@@ -226,12 +234,12 @@ class GameTab(ttk.Frame):
                 self.run_button.state(["!disabled"])
                 if payload is None:
                     self.progress["value"] = 0
-                    self.status_var.set("Ошибка")
+                    self.status_var.set(t("Error"))
                     self.log_line(f"[!] {extra}")
-                    messagebox.showerror("Обработка не удалась", extra, parent=self)
+                    messagebox.showerror(t("Processing failed"), extra, parent=self)
                 else:
                     self.progress["value"] = 100
-                    self.status_var.set("Готово")
+                    self.status_var.set(t("Done"))
                     self.log_line(f"[+] Disc {payload['disc_id']} — {payload['region']}")
                     if payload["warning"]:
                         self.log_line("[!] " + payload["warning"])
@@ -247,27 +255,36 @@ class GameTab(ttk.Frame):
             if info:
                 age = (f"\nDisc ID: {info.get('DISC_ID', 'UNKNOWN')}"
                        f"  ({launcher.region_note(info.get('DISC_ID', ''))})"
-                       f"\nНазвание: {info.get('TITLE', 'Неизвестно')}")
-            self.info_var.set(f"Игра подготовлена: {eboot}\n"
-                              f"Игровые файлы: {launcher.GAME_DIR / 'PSP_GAME'}{age}")
+                       f"\n" + t("Title: {title}",
+                                 title=info.get("TITLE", t("Unknown"))))
+            self.info_var.set(t(
+                "Game ready: {eboot}\nGame files: {psp}{extra}",
+                eboot=eboot, psp=launcher.GAME_DIR / "PSP_GAME", extra=age))
         else:
-            self.info_var.set("Игра ещё не подготовлена — обработайте ISO.")
+            self.info_var.set(t("Game is not ready yet — process an ISO."))
 
     def launch(self) -> None:
         eboot = launcher.GAME_DIR / "EBOOT.ELF"
         if not eboot.exists():
-            messagebox.showinfo("Сначала ISO", "Игра не подготовлена: обработайте ISO.", parent=self)
+            messagebox.showinfo(t("Process ISO first"),
+                                t("Game is not ready: process an ISO."), parent=self)
             return
         exe = launcher.find_game_exe()
         if not exe:
-            messagebox.showerror("LCSNative.exe не найден",
-                                 "Соберите игру (lcs\\BUILD_LCS.bat) или положите "
-                                 "LCSNative.exe рядом с лаунчером.", parent=self)
+            messagebox.showerror(
+                t("LCSNative.exe not found"),
+                t("Build the game (lcs\\BUILD_LCS.bat) or place LCSNative.exe next to the launcher."),
+                parent=self)
             return
+        try:
+            prompt_pack.build_prompt_pack(read_prompt_style(launcher.INI_PATH))
+        except Exception as error:
+            self.log_line(t("[!] Could not build prompt icons: {error}", error=error))
         env = dict(os.environ, PSPRECOMP_CONFIG=str(launcher.INI_PATH))
         subprocess.Popen([str(exe), "--game", str(launcher.GAME_DIR)],
                          cwd=str(exe.parent), env=env)
-        self.log_line(f"[+] Запуск {exe.name} — настройки управления: {launcher.INI_PATH}")
+        self.log_line(t("[+] Launching {name} — controls: {ini}",
+                        name=exe.name, ini=launcher.INI_PATH))
 
     def open_folder(self) -> None:
         launcher.GAME_DIR.mkdir(parents=True, exist_ok=True)
@@ -275,25 +292,31 @@ class GameTab(ttk.Frame):
 
 
 class ControlsTab(ttk.Frame):
-    """Две колонки привязок на строку: клавиши клавиатуры/мыши и кнопки геймпада."""
+    """Two binding columns per row: keyboard/mouse keys and gamepad buttons."""
 
     def __init__(self, master):
         super().__init__(master, padding=10)
         self.cfg = self._load()
-        self.style = tk.StringVar(value="xbox")
-        self.status_var = tk.StringVar(value="Клик по «+» — назначить, клик по иконке — убрать или заменить.")
+        saved = read_prompt_style(launcher.INI_PATH) if launcher.INI_PATH.exists() else "original"
+        self.style = tk.StringVar(value={"original": "playstation", "psp": "playstation"}.get(saved, saved))
+        self.status_var = tk.StringVar(
+            value=t("Click + to bind, click an icon to remove or replace."))
         self.capture: tuple[str, int | None] | None = None
         self.rows: dict[str, tuple[ttk.Frame, ttk.Frame]] = {}
         self.dirty = False
 
         header = ttk.Frame(self)
         header.pack(fill="x")
-        ttk.Label(header, text="Иконки геймпада:").pack(side="left")
-        for value, text in (("xbox", "Xbox"), ("playstation", "PlayStation")):
+        ttk.Label(header, text=t("Icon display:")).pack(side="left")
+        for value, text in (
+            ("playstation", "PlayStation"),
+            ("xbox", "Xbox"),
+            ("kb", t("Keyboard and mouse")),
+        ):
             ttk.Radiobutton(header, text=text, value=value, variable=self.style,
-                            command=self._rebuild).pack(side="left", padx=(2, 6))
-        ttk.Button(header, text="Сохранить", command=self.save).pack(side="right")
-        ttk.Button(header, text="Вернуть по умолчанию",
+                            command=self._change_style).pack(side="left", padx=(2, 8))
+        ttk.Button(header, text=t("Save"), command=self.save).pack(side="right")
+        ttk.Button(header, text=t("Restore defaults"),
                    command=self.reset_defaults).pack(side="right", padx=6)
 
         self.scroll = ScrollFrame(self, scroll_enabled=lambda: self.capture is None)
@@ -303,7 +326,7 @@ class ControlsTab(ttk.Frame):
         sticks = ttk.Frame(self)
         sticks.pack(fill="x", pady=(8, 0))
         self.stick_vars: dict[str, tk.StringVar] = {}
-        for stick, text in (("LeftStick", "Левый стик"), ("RightStick", "Правый стик")):
+        for stick, text in (("LeftStick", t("Left stick")), ("RightStick", t("Right stick"))):
             ttk.Label(sticks, text=text + ":").pack(side="left")
             var = tk.StringVar(master=self, value=self.cfg.sticks[stick])
             box = ttk.Combobox(sticks, values=list(STICK_ROLES), width=8, state="readonly",
@@ -322,22 +345,22 @@ class ControlsTab(ttk.Frame):
             return ControlsConfig.load(launcher.INI_PATH)
         return ControlsConfig()
 
-    # --- построение списка ---
     def _rebuild(self) -> None:
         for child in self.scroll.inner.winfo_children():
             child.destroy()
         self.rows.clear()
-        for text, column in (("Действие", 0), ("Клавиши на ПК", 1), ("Кнопки геймпада", 2)):
+        for text, column in ((t("Action"), 0), (t("PC keys"), 1), (t("Gamepad buttons"), 2)):
             ttk.Label(self.scroll.inner, text=text, font=("Segoe UI", 10, "bold")).grid(
                 row=0, column=column, sticky="w", padx=(0, 18), pady=(0, 6))
         for number, action in enumerate(ACTIONS, start=1):
-            label, on_foot, in_car = ACTION_LABELS[action]
+            label, on_foot, in_car = action_labels(action)
             label_frame = ttk.Frame(self.scroll.inner)
             name_label = ttk.Label(label_frame, text=label, font=("Segoe UI", 10))
             name_label.pack(anchor="w")
             hint = ttk.Label(label_frame, foreground="#666666", justify="left",
                              wraplength=px(210),
-                             text=f"пешком: {on_foot} · в машине: {in_car}")
+                             text=t("on foot: {on_foot} · in vehicle: {in_car}",
+                                    on_foot=on_foot, in_car=in_car))
             hint.pack(anchor="w")
             label_frame.grid(row=number, column=0, sticky="w", padx=(0, 12), pady=4)
             for widget in (label_frame, name_label, hint):
@@ -351,8 +374,9 @@ class ControlsTab(ttk.Frame):
             self._refresh_row(action)
         ttk.Separator(self.scroll.inner, orient="horizontal").grid(
             row=len(ACTIONS) + 1, column=0, columnspan=3, sticky="we", pady=6)
-        note = ("У одного действия не больше 4 клавиш и у кнопки геймпада — 4 действия. "
-                "Названия клавиш лаунчер пишет так же, как их читает игра.")
+        note = t(
+            "An action can have at most 4 keys and a gamepad button can have 4 actions. "
+            "The launcher writes key names the same way the game reads them.")
         ttk.Label(self.scroll.inner, text=note, foreground="#666666").grid(
             row=len(ACTIONS) + 2, column=0, columnspan=3, sticky="w")
         self.scroll.inner.grid_columnconfigure(0, minsize=px(200))
@@ -390,24 +414,27 @@ class ControlsTab(ttk.Frame):
     def _pad_icon(self, parent, action: str, pad: str) -> None:
         canvas = tk.Canvas(parent, width=px(PAD_SIZE), height=px(PAD_SIZE), bg=LIST_BG,
                            highlightthickness=0)
-        button_icons.draw_pad(canvas, PAD_ICON_TOKEN[pad], self.style.get(), px(PAD_SIZE))
+        button_icons.draw_pad(canvas, PAD_ICON_TOKEN[pad], self._pad_draw_style(), px(PAD_SIZE))
         canvas.pack(side="left", padx=(0, 4))
         canvas.bind("<Button-1>", lambda e, p=pad: self._unbind_pad(action, p))
         canvas.bind("<Button-3>", lambda e, p=pad: self._unbind_pad(action, p))
 
-    # --- редактирование ---
     def _key_menu(self, event, action: str, name: str, index: int) -> None:
         self.item_menu.delete(0, "end")
-        self.item_menu.add_command(label=f"Заменить «{key_caption(name)}»…",
-                                   command=lambda a=action, i=index: self.begin_capture(a, i))
-        self.item_menu.add_command(label="Убрать",
-                                   command=lambda a=action, i=index: self._remove_key(a, i))
+        self.item_menu.add_command(
+            label=t("Replace “{caption}”…", caption=key_caption(name)),
+            command=lambda a=action, i=index: self.begin_capture(a, i))
+        self.item_menu.add_command(
+            label=t("Remove"),
+            command=lambda a=action, i=index: self._remove_key(a, i))
         self.item_menu.tk_popup(event.x_root, event.y_root)
 
     def _remove_key(self, action: str, index: int) -> None:
         if 0 <= index < len(self.cfg.actions[action]):
             removed = self.cfg.actions[action].pop(index)
-            self._after_change(action, f"«{key_caption(removed)}» убрана — не забудьте сохранить.")
+            self._after_change(
+                action, t("“{caption}” removed — remember to save.",
+                          caption=key_caption(removed)))
 
     def _unbind_pad(self, action: str, pad: str) -> None:
         self._toggle_pad(action, pad)
@@ -416,25 +443,41 @@ class ControlsTab(ttk.Frame):
         bound = set(self.cfg.pad_buttons_for(action))
         self.pad_menu.delete(0, "end")
         for pad in PAD_BUTTONS:
-            label = self._pad_label(pad)
+            xbox, playstation, role = pad_labels(pad)
+            label = xbox if self._pad_draw_style() == "xbox" else playstation
             self.pad_menu.add_command(
-                label=("✓ " if pad in bound else "   ") + f"{label}  ·  {PAD_LABELS[pad][2]}",
+                label=("✓ " if pad in bound else "   ") + f"{label}  ·  {role}",
                 command=lambda p=pad, a=action: self._toggle_pad(a, p))
         self.pad_menu.tk_popup(parent.winfo_pointerx(), parent.winfo_pointery())
 
     def _pad_label(self, pad: str) -> str:
-        return PAD_LABELS[pad][0 if self.style.get() == "xbox" else 1]
+        xbox, playstation, _role = pad_labels(pad)
+        return xbox if self._pad_draw_style() == "xbox" else playstation
+
+    def _pad_draw_style(self) -> str:
+        """Gamepad column: Xbox faces when the player chose keyboard prompts."""
+        return "xbox" if self.style.get() == "kb" else self.style.get()
+
+    def _prompt_style(self) -> str:
+        choice = self.style.get()
+        return "original" if choice == "playstation" else choice
+
+    def _change_style(self) -> None:
+        self.dirty = True
+        self._rebuild()
+        self.status_var.set(t("Icon style changed — click Save to apply in-game."))
 
     def _toggle_pad(self, action: str, pad: str) -> None:
         label = self._pad_label(pad)
         if action in self.cfg.pads[pad]:
             self.cfg.toggle_pad(pad, action)
-            message = f"{label} отвязана — не забудьте сохранить."
+            message = t("{label} unbound — remember to save.", label=label)
         elif len(self.cfg.pads[pad]) >= MAX_PER_BINDING:
-            message = f"На {label} уже 4 действия — сначала освободите кнопку."
+            message = t("{label} already has 4 actions — free a slot first.", label=label)
         else:
             self.cfg.toggle_pad(pad, action)
-            message = f"{label} → «{ACTION_LABELS[action][0]}» — не забудьте сохранить."
+            message = t("{label} → “{action}” — remember to save.",
+                        label=label, action=action_labels(action)[0])
         self._after_change(action, message)
 
     def begin_capture(self, action: str, slot: int | None) -> None:
@@ -444,7 +487,7 @@ class ControlsTab(ttk.Frame):
         top.bind("<KeyPress>", self._on_key, add="+")
         top.bind("<ButtonPress>", self._on_button, add="+")
         top.bind("<MouseWheel>", self._on_wheel, add="+")
-        self.status_var.set("Нажмите клавишу, кнопку мыши или колесо… Esc — отмена.")
+        self.status_var.set(t("Press a key, mouse button, or wheel… Esc cancels."))
 
     def _end_capture(self) -> None:
         top = self.winfo_toplevel()
@@ -458,13 +501,14 @@ class ControlsTab(ttk.Frame):
             return None
         if event.keysym == "Escape":
             self._end_capture()
-            self.status_var.set("Назначение отменено.")
+            self.status_var.set(t("Binding cancelled."))
             return "break"
         action, slot = self.capture
         name = key_name_from_event(event)
         self._end_capture()
         if not name:
-            self.status_var.set(f"Клавиша {event.keysym or '?'} игрой не поддерживается.")
+            self.status_var.set(t("Key {key} is not supported by the game.",
+                                  key=event.keysym or "?"))
             return "break"
         self._assign_key(action, name, slot)
         return "break"
@@ -476,7 +520,7 @@ class ControlsTab(ttk.Frame):
         name = MOUSE_BUTTONS.get(event.num)
         self._end_capture()
         if not name:
-            self.status_var.set("Ввод клавиши отменён.")
+            self.status_var.set(t("Key input cancelled."))
             return "break"
         self._assign_key(action, name, slot)
         return "break"
@@ -491,49 +535,52 @@ class ControlsTab(ttk.Frame):
 
     def _assign_key(self, action: str, name: str, slot: int | None) -> None:
         if name not in HOST_KEYS:
-            self.status_var.set(f"Клавиша {name} не распознана.")
+            self.status_var.set(t("Key {name} was not recognized.", name=name))
             return
         keys = self.cfg.actions[action]
         if name in keys:
             keys.remove(name)
         if slot is None:
             if len(keys) >= MAX_PER_BINDING:
-                self.status_var.set("Для действия уже назначено 4 клавиши.")
+                self.status_var.set(t("This action already has 4 keys."))
                 return
             keys.append(name)
         else:
             keys.insert(min(slot, len(keys)), name)
-        self._after_change(action, f"{key_caption(name)} → «{ACTION_LABELS[action][0]}»."
-                                   " Не забудьте сохранить.")
+        self._after_change(
+            action,
+            t("{caption} → “{action}”. Remember to save.",
+              caption=key_caption(name), action=action_labels(action)[0]))
 
     def _set_stick(self, stick: str, value: str) -> None:
         self.cfg.sticks[stick] = value if value in STICK_ROLES else "None"
         self.dirty = True
-        self.status_var.set("Стики обновлены — не забудьте сохранить.")
+        self.status_var.set(t("Sticks updated — remember to save."))
 
     def _after_change(self, action: str, message: str) -> None:
         self.dirty = True
         self._refresh_row(action)
         self.status_var.set(message)
 
-    # --- запись в LCSNative.ini ---
     def save(self) -> bool:
         try:
             if not launcher.INI_PATH.exists():
                 launcher.INI_PATH.parent.mkdir(parents=True, exist_ok=True)
                 launcher.INI_PATH.write_text("[Controls]\n", encoding="utf-8")
             self.cfg.save(launcher.INI_PATH)
-        except OSError as error:
-            messagebox.showerror("Не удалось сохранить", str(error), parent=self)
+            write_prompt_style(launcher.INI_PATH, self._prompt_style())
+            prompt_pack.build_prompt_pack(self._prompt_style(), self.cfg)
+        except (OSError, ValueError) as error:
+            messagebox.showerror(t("Could not save"), str(error), parent=self)
             return False
         self.dirty = False
-        self.status_var.set(f"Сохранено в {launcher.INI_PATH}")
+        self.status_var.set(t("Saved to {path}", path=launcher.INI_PATH))
         return True
 
     def reset_defaults(self) -> None:
         if not messagebox.askyesno(
-                "Сброс настроек",
-                "Вернуть все клавиши, кнопки геймпада и стики к значениям по умолчанию?",
+                t("Reset controls"),
+                t("Restore every key, gamepad button, and stick to the defaults?"),
                 parent=self):
             return
         self.cfg.reset_defaults()
@@ -541,7 +588,7 @@ class ControlsTab(ttk.Frame):
             var.set(self.cfg.sticks[stick])
         self._rebuild()
         self.dirty = False
-        self.status_var.set("Настройки управления вернулись к значениям по умолчанию.")
+        self.status_var.set(t("Controls restored to defaults."))
         self.save()
 
 
@@ -550,7 +597,7 @@ class LauncherApp(tk.Tk):
         super().__init__()
         global SCALE
         self.title(APP_TITLE)
-        self.update_idletasks()  # окно Tk должно существовать до запроса DPI
+        self.update_idletasks()
 
         SCALE = detect_scale(self)
         if SCALE > 1.0:
@@ -570,8 +617,8 @@ class LauncherApp(tk.Tk):
         style.configure("TNotebook.Tab", padding=(14, 6))
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=8)
-        notebook.add(GameTab(notebook), text="  Игра  ")
-        notebook.add(ControlsTab(notebook), text="  Управление  ")
+        notebook.add(GameTab(notebook), text=t("  Game  "))
+        notebook.add(ControlsTab(notebook), text=t("  Controls  "))
 
 
 def main() -> None:

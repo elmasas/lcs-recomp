@@ -3,6 +3,8 @@
 LCS Recomp Multi-Region ISO Launcher
 Extracts PSP_GAME + decrypts EBOOT.BIN from any LCS ISO (US/EU/JP/DE/etc).
 Requires: 7-Zip (7z in PATH) + pspdecrypt.exe next to this script or in PATH.
+
+User-facing messages are English; Russian overlays them through i18n.t().
 """
 
 import os
@@ -10,12 +12,14 @@ import re
 import sys
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from i18n import t
 
 
 def _base_dir() -> Path:
-    """Собранный exe ищет игру рядом с собой; скрипт — в корне репозитория."""
+    """Frozen exe looks next to itself; the script uses the repo root."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
@@ -32,7 +36,7 @@ PRIMARY_DISC_ID = "ULUS10041"
 
 
 class LauncherError(RuntimeError):
-    """Что пошло не так — текстом для пользователя."""
+    """User-visible failure message."""
 
 
 # Known LCS disc IDs, spelled as PARAM.SFO stores them (redump writes them with
@@ -76,14 +80,15 @@ def find_tool(name: str) -> str:
 def extract_iso(iso_path: Path, dest: Path, report=None) -> None:
     sevenzip = find_tool(SEVENZIP)
     if not Path(sevenzip).exists() and not shutil.which(sevenzip):
-        raise LauncherError("7-Zip не найден. Установите его командой: winget install -e --id 7zip.7zip")
+        raise LauncherError(t(
+            "7-Zip was not found. Install it with: winget install -e --id 7zip.7zip"))
     args = [sevenzip, "x", str(iso_path), f"-o{dest}", "-y"]
     if report is None:
         print(f"[*] Extracting {iso_path.name} ...")
         # A 1.2 GB disc runs for a while, so 7-Zip keeps the console for progress.
         result = subprocess.run(args + ["PSP_GAME"])
         if result.returncode != 0:
-            raise LauncherError("7-Zip не смог прочитать этот ISO.")
+            raise LauncherError(t("7-Zip could not read this ISO."))
         return
     # -bsp1 routes 7-Zip's percentage line to stdout so the GUI can show it.
     process = subprocess.Popen(args + ["-bsp1", "PSP_GAME"],
@@ -94,24 +99,26 @@ def extract_iso(iso_path: Path, dest: Path, report=None) -> None:
         marker = re.search(r"\b(\d{1,3})%", line)
         if marker and marker.group(1) != shown:
             shown = marker.group(1)
-            report(f"Извлечение PSP_GAME — {shown}%", int(shown) * 80 // 100)
+            report(t("Extracting PSP_GAME — {percent}%", percent=shown),
+                   int(shown) * 80 // 100)
     if process.wait() != 0:
-        raise LauncherError("7-Zip не смог прочитать этот ISO.")
+        raise LauncherError(t("7-Zip could not read this ISO."))
 
 
 def decrypt_eboot(src: Path, dst: Path, report=None) -> None:
     if report is None:
         print("[*] Decrypting EBOOT.BIN ...")
     else:
-        report("Расшифровка EBOOT.BIN ...", 85)
+        report(t("Decrypting EBOOT.BIN ..."), 85)
     dec = find_tool(PSPDECRYPT)
     if not Path(dec).exists() and not shutil.which(dec):
-        raise LauncherError(
-            "pspdecrypt.exe не найден. Скачайте: https://github.com/John-K/pspdecrypt/releases")
+        raise LauncherError(t(
+            "pspdecrypt.exe was not found. Download: https://github.com/John-K/pspdecrypt/releases"))
     result = subprocess.run([dec, str(src), "-o", str(dst)], capture_output=True, text=True)
     if result.returncode != 0:
-        raise LauncherError("pspdecrypt не смог расшифровать EBOOT.BIN:\n"
-                            + (result.stderr or result.stdout or ""))
+        raise LauncherError(t(
+            "pspdecrypt could not decrypt EBOOT.BIN:\n{detail}",
+            detail=(result.stderr or result.stdout or "")))
 
 
 def parse_sfo(sfo_path: Path) -> dict:
@@ -143,51 +150,53 @@ def parse_sfo(sfo_path: Path) -> dict:
     return {key: values[key] for key in ("DISC_ID", "TITLE") if key in values}
 
 def process_iso(iso_path: Path, game_dir: Path | None = None, report=None) -> dict:
-    """Полный конвейер: PSP_GAME -> EBOOT.ELF -> сведения о диске.
+    """Full pipeline: PSP_GAME -> EBOOT.ELF -> disc info.
 
-    report(сообщение, процент) — колбэк интерфейса; без него работают как CLI.
+    report(message, percent) is the GUI callback; without it this is CLI mode.
     """
     game_dir = Path(game_dir or GAME_DIR)
     iso_path = Path(iso_path)
     if not iso_path.exists():
-        raise LauncherError(f"ISO не найден: {iso_path}")
+        raise LauncherError(t("ISO not found: {path}", path=iso_path))
     say = report or (lambda message, percent=None: print(message))
 
     game_dir.mkdir(parents=True, exist_ok=True)
-    say("Подготовка папки игры", 0)
+    say(t("Preparing game folder"), 0)
 
     # 7z recreates PSP_GAME under the destination, so unpack straight into the
     # game folder rather than writing the 1.2 GB disc twice.
     psp = game_dir / "PSP_GAME"
     if psp.exists():
-        say("Удаление предыдущей версии PSP_GAME ...", 2)
+        say(t("Removing previous PSP_GAME ..."), 2)
         shutil.rmtree(psp)
     extract_iso(iso_path, game_dir, report)
     if not psp.exists():
-        raise LauncherError("В этом ISO нет папки PSP_GAME — похоже, это не игра PSP.")
+        raise LauncherError(t(
+            "This ISO has no PSP_GAME folder — it does not look like a PSP game."))
 
     eboot_bin = psp / "SYSDIR" / "EBOOT.BIN"
     if not eboot_bin.exists():
-        raise LauncherError("В ISO нет SYSDIR/EBOOT.BIN.")
+        raise LauncherError(t("This ISO has no SYSDIR/EBOOT.BIN."))
     eboot_elf = game_dir / "EBOOT.ELF"
     decrypt_eboot(eboot_bin, eboot_elf, report)
     if not eboot_elf.exists():
-        raise LauncherError("EBOOT.ELF не появился после расшифровки.")
+        raise LauncherError(t("EBOOT.ELF did not appear after decryption."))
 
     info = parse_sfo(psp / "PARAM.SFO")
     disc_id = info.get("DISC_ID", "UNKNOWN")
-    title = info.get("TITLE", "Неизвестно")
+    title = info.get("TITLE", t("Unknown"))
     warning = None
     if disc_id.replace("-", "") != PRIMARY_DISC_ID:
-        warning = ("Адреса в собранном коде проверены для ULUS-10041 (US v1.05).\n"
-                   "    Другие регионы могут работать с ошибками; извлечение прошло успешно.")
-    say("Готово", 100)
+        warning = t(
+            "Addresses in the built code were verified for ULUS-10041 (US v1.05).\n"
+            "    Other regions may glitch; extraction still succeeded.")
+    say(t("Done"), 100)
     return {"disc_id": disc_id, "title": title, "region": region_note(disc_id),
             "warning": warning, "game_dir": str(game_dir.resolve()), "psp_game": str(psp)}
 
 
 def find_game_exe() -> Path | None:
-    """Собранный LCSNative.exe: рядом с лаунчером или в дереве сборки."""
+    """Built LCSNative.exe next to the launcher or under the build tree."""
     names = ("LCSNative.exe", "lcs.exe")
     roots = [REPO_ROOT, REPO_ROOT / "lcs", REPO_ROOT / "out",
              REPO_ROOT / "out" / "lcs-clang", REPO_ROOT / "out" / "lcs-clang" / "lcs",

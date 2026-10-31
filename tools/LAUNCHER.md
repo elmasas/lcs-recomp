@@ -1,45 +1,70 @@
-# Лаунчер образов LCS (CLI и графический)
+# LCS image launcher (CLI and GUI)
 
-## 1. `LCSLauncher.exe` — интерфейс
-Файл лежит в корне проекта, рядом с папкой `lcs` (именно там игра и настройки).
+## 1. `LCSLauncher.exe` — GUI
 
-**Вкладка «Игра»**
-1. «Обзор…» — выбрать ISO/CSO/PBP образ игры.
-2. «Обработать ISO» — извлекает `PSP_GAME` в `lcs\\game`, расшифровывает
-   `SYSDIR\\EBOOT.BIN` в `lcs\\game\\EBOOT.ELF`, читает `PARAM.SFO` и показывает
-   Disc ID, название и регион. Прогресс и журнал — в окне.
-3. «Запустить игру» — запускает собранный `LCSNative.exe` с папкой игры и
-   `lcs\\config\\LCSNative.ini`. «Открыть папку с игрой» — тот же каталог в проводнике.
+The executable sits at the repo root, next to the `lcs` folder (that is where
+the game and settings live).
 
-**Вкладка «Управление»**
-- Две колонки на каждое действие: клавиши на ПК (иконки клавиш, ЛКМ/ПКМ/СКМ,
-  боковые кнопки и колесо) и кнопки геймпада (иконки Xbox или PlayStation —
-  переключатель сверху).
-- Назначение: клик по названию действия или по «+», затем нажать клавишу,
-  кнопку мыши или крутануть колесо. Esc отменяет ввод.
-- Убрать или заменить: клик по иконке (доступно и через правую кнопку).
-- Кнопка геймпада: «+» открывает список всех кнопок, отметка ✓ — уже назначено.
-- «Вернуть по умолчанию» — сбрасывает клавиши, кнопки и стики к значениям из
-  `default_control_bindings()` и сразу сохраняет.
-- Роли стиков — выпадающие списки «Левый стик» / «Правый стик».
-- До 4 клавиш на действие и до 4 действий на кнопку геймпада — как в движке.
+**Game tab**
+1. Browse… — pick an ISO/CSO/PBP image.
+2. Process ISO — extracts `PSP_GAME` into `lcs\game`, decrypts
+   `SYSDIR\EBOOT.BIN` to `lcs\game\EBOOT.ELF`, reads `PARAM.SFO` and shows
+   Disc ID, title and region. Progress and a log appear in the window.
+3. Launch game — starts the built `LCSNative.exe` with the game folder and
+   `lcs\config\LCSNative.ini`. Open game folder opens that directory in
+   Explorer.
 
-Нужны: 7-Zip (`winget install -e --id 7zip.7zip`); `pspdecrypt.exe` уже внутри exe.
+**Controls tab**
+- Two columns per action: PC keys (keycaps, LMB/RMB/MMB, side buttons and
+  wheel) and gamepad buttons.
+- Icon display: PlayStation, Xbox, or keyboard and mouse — both in the
+  launcher table and in the in-game HUD. Written to `Display.ButtonPrompts`
+  (`Original` / `xbox` / `kb`). On save the launcher builds
+  `lcs/config/textures/<style>/` from `_source`.
+- Bind: click the action name or +, then press a key, mouse button or
+  scroll the wheel. Esc cancels.
+- Remove or replace: click the icon (right-click works too).
+- Gamepad button: + opens the full button list; ✓ means already bound.
+- Restore defaults — resets keys, pads and sticks from
+  `default_control_bindings()` and saves immediately.
+- Stick roles — Left stick / Right stick dropdowns.
+- At most 4 keys per action and 4 actions per pad button, matching the
+  engine.
 
-## 2. Пересборка exe
-```bash
-pip install pyinstaller
-python -m PyInstaller --noconfirm --onefile --windowed --name LCSLauncher \
-  --icon lcs/resources/lcsnative.ico \
-  --add-binary "tools/pspdecrypt.exe;." --paths tools tools/launcher_gui.py
-copy dist\\LCSLauncher.exe .
+Needs: 7-Zip (`winget install -e --id 7zip.7zip`); `pspdecrypt.exe` is
+already inside the exe.
+
+### Language (i18n)
+
+English is the default UI language and the source of every string key.
+Russian is an optional catalog in `tools/i18n.py`.
+
+- Default: English.
+- On a Russian Windows UI language the launcher picks Russian automatically.
+- Override with `LCS_LAUNCHER_LANG=en` or `LCS_LAUNCHER_LANG=ru`.
+
+## 2. Rebuild the exe
+
+From the repo root (Python 3.11+, PyInstaller):
+
+```
+python -m PyInstaller --noconfirm --onefile --windowed --name LCSLauncher ^
+  --icon lcs/resources/lcsnative.ico ^
+  --add-binary tools/pspdecrypt.exe;. ^
+  --hidden-import prompt_pack --hidden-import button_icons ^
+  --hidden-import lcs_controls_model --hidden-import launcher ^
+  --hidden-import i18n --paths tools tools/launcher_gui.py
 ```
 
-## 3. Консольная версия
-`python tools\\launcher.py "C:\\путь\\к\\GTA_Liberty_City_Stories.iso"` или
-перетащить ISO на `tools\\launcher.bat`. Делает то же самое без интерфейса.
+Copy `dist\LCSLauncher.exe` to the repo root.
 
-## Регионы
-Лучше всего проверен **ULUS-10041 (US v1.05)** — под него собраны адреса движка.
-Другие диски (ULES-00151, ULES-00182, ULJM-05255, ULKS-46157) извлекаются
-штатно, но в игре возможны ошибки.
+## 3. CLI
+
+`python tools\launcher.py "C:\path\to\GTA_Liberty_City_Stories.iso"` or drop
+an ISO onto `tools\launcher.bat`. Same pipeline without the GUI.
+
+## Regions
+
+Best tested is **ULUS-10041 (US v1.05)** — engine addresses are built for it.
+Other discs (ULES-00151, ULES-00182, ULJM-05255, ULKS-46157) extract fine but
+may glitch in-game.
