@@ -150,14 +150,74 @@ DumpState &dump_state() {
 }
 
 const std::string &prompt_texture_style() {
-    static const std::string style = [] {
-        const std::string configured = lowercase(lcs_render_configuration().display.prompt_style);
-        if (configured.empty() || configured == "original" || configured == "psp" ||
-            configured == "playstation" || configured == "off" || configured == "none")
-            return std::string();
-        return configured;
-    }();
+    static std::string style;
+    const std::string configured = lowercase(lcs_render_configuration().display.prompt_style);
+    if (configured.empty() || configured == "original" || configured == "psp" ||
+        configured == "playstation" || configured == "off" || configured == "none")
+        style.clear();
+    else
+        style = configured;
     return style;
+}
+
+std::filesystem::path find_override_file(const std::string &style, std::uint64_t signature,
+                                         std::uint32_t width, std::uint32_t height) {
+    const std::string name = signature_name(signature) + ".rgba";
+    const LcsConfiguration &config = lcs_render_configuration();
+    std::vector<std::filesystem::path> roots;
+    roots.push_back(configuration_root());
+    if (!config.executable_directory.empty()) {
+        roots.push_back(config.executable_directory);
+        roots.push_back(config.executable_directory / "config");
+        if (config.executable_directory.has_parent_path())
+            roots.push_back(config.executable_directory.parent_path() / "config");
+    }
+    const std::size_t expected = static_cast<std::size_t>(width) * height * 4u;
+    for (const auto &root : roots) {
+        const auto path = root / "textures" / style / name;
+        std::vector<std::byte> probe = read_rgba_file(path, expected);
+        if (!probe.empty()) return path;
+    }
+    return {};
+}
+
+void blit_spacebar_cell(std::span<std::byte> rgba8, std::uint32_t width, std::uint32_t col,
+                        std::uint32_t row) {
+    const std::uint32_t cell = 16u;
+    const std::uint32_t x0 = col * cell;
+    const std::uint32_t y0 = row * cell;
+    if ((x0 + cell) > width) return;
+    const std::size_t need = static_cast<std::size_t>(width) * (y0 + cell) * 4u;
+    if (rgba8.size() < need) return;
+    auto *base = reinterpret_cast<std::uint8_t *>(rgba8.data());
+    for (std::uint32_t y = 0; y < cell; ++y) {
+        for (std::uint32_t x = 0; x < cell; ++x) {
+            std::uint8_t *px = base + ((y0 + y) * width + (x0 + x)) * 4u;
+            px[0] = px[1] = px[2] = px[3] = 0;
+        }
+    }
+    const int y_top = 7;
+    const int y_bot = 11;
+    for (int y = y_top; y <= y_bot; ++y) {
+        for (int x = 1; x <= 14; ++x) {
+            const bool edge = y == y_top || y == y_bot || x == 1 || x == 14;
+            if (!edge) continue;
+            std::uint8_t *px = base + ((y0 + static_cast<std::uint32_t>(y)) * width +
+                                       (x0 + static_cast<std::uint32_t>(x))) *
+                                          4u;
+            px[0] = px[1] = px[2] = px[3] = 255;
+        }
+    }
+}
+
+void patch_kb_letter_r(std::uint64_t signature, std::uint32_t width, std::uint32_t height,
+                       std::span<std::byte> rgba8) {
+    if (width != 256u || height != 256u) return;
+    // 5ff05f6c2afa636b and 37bf52ac7d5c44c4 HUD fonts.
+    if (signature != 0x5ff05f6c2afa636bull && signature != 0x37bf52ac7d5c44c4ull) return;
+    blit_spacebar_cell(rgba8, width, 2u, 3u);   // ASCII 'R'
+    if (signature == 0x37bf52ac7d5c44c4ull)
+        blit_spacebar_cell(rgba8, width, 5u, 15u);  // last-row R button
 }
 
 void prompt_texture_apply(std::uint64_t signature, std::uint32_t width, std::uint32_t height,
@@ -172,22 +232,21 @@ void prompt_texture_apply(std::uint64_t signature, std::uint32_t width, std::uin
         const auto found = cache.loaded.find(signature);
         if (found != cache.loaded.end()) {
             pixels = found->second;
-        } else if (cache.missing.count(signature) != 0u) {
-            return;
         } else {
-            pixels = read_rgba_file(
-                configuration_root() / "textures" / style / (signature_name(signature) + ".rgba"),
-                static_cast<std::size_t>(width) * height * 4u);
-            if (pixels.empty()) cache.missing.insert(signature);
-            else cache.loaded.insert({signature, pixels});
+            const auto path = find_override_file(style, signature, width, height);
+            if (!path.empty()) {
+                pixels = read_rgba_file(path, static_cast<std::size_t>(width) * height * 4u);
+                if (!pixels.empty()) cache.loaded.insert({signature, pixels});
+            }
         }
     }
-    if (pixels.empty()) return;
     const std::size_t mip0_bytes = static_cast<std::size_t>(width) * height * 4u;
-    const std::size_t copy_bytes = std::min(mip0_bytes, rgba8.size());
-    std::memcpy(rgba8.data(), pixels.data(), copy_bytes);
-    if (copy_bytes == mip0_bytes && mip_levels > 1u &&
-        rgba8.size() >= chain_bytes(width, height, mip_levels))
+    if (!pixels.empty()) {
+        const std::size_t copy_bytes = std::min(mip0_bytes, rgba8.size());
+        std::memcpy(rgba8.data(), pixels.data(), copy_bytes);
+    }
+    if (style == "kb") patch_kb_letter_r(signature, width, height, rgba8);
+    if (mip_levels > 1u && rgba8.size() >= chain_bytes(width, height, mip_levels))
         rebuild_mip_chain(rgba8, width, height, mip_levels);
 }
 
