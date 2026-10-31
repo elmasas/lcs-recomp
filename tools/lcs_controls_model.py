@@ -1,15 +1,20 @@
-"""Чтение и запись секции [Controls] в LCSNative.ini.
+"""Read and write the [Controls] section of LCSNative.ini.
 
-Имена действий, кнопок геймпада и клавиш соответствуют парсеру рантайма
-(lcs/host/lcs_key_bindings.hpp), а значения по умолчанию взяты из
-default_control_bindings() в том же заголовке. Файл переписывается точечно:
-комментарии, порядок строк и остальные секции остаются как были.
+Action names, pad buttons and key tokens match the runtime parser in
+lcs/host/lcs_key_bindings.hpp. Defaults come from default_control_bindings()
+in the same header. Writes are surgical: comments, line order and other
+sections stay as they were.
+
+UI labels are English. Callers that show them in the launcher should pass them
+through i18n.t() so Russian (and later locales) can overlay the same keys.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from i18n import t
 
 MAX_PER_BINDING = 4  # kMaxKeysPerAction
 
@@ -19,29 +24,29 @@ ACTIONS = (
     "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake",
 )
 
-# Подписи для интерфейса: действие, пешком, в машине.
+# English UI labels: action name, on foot, in vehicle.
 ACTION_LABELS = {
-    "MoveForward": ("Вперёд", "идти", "газ"),
-    "MoveBack": ("Назад", "идти назад", "тормоз"),
-    "MoveLeft": ("Влево", "движение", "руль"),
-    "MoveRight": ("Вправо", "движение", "руль"),
-    "Walk": ("Шаг", "короткие шаги", "—"),
-    "Sprint": ("Бег", "бежать", "не отправляется"),
-    "Jump": ("Прыжок", "прыжок", "тормоз"),
-    "EnterVehicle": ("Сесть/выйти", "транспорт", "транспорт"),
-    "Attack": ("Атака", "огонь", "огонь"),
-    "Aim": ("Прицел", "прицел", "не отправляется"),
-    "CenterCamera": ("Камера сзади", "и подобрать оружие", "подобрать оружие"),
-    "WeaponPrevious": ("Оружие назад", "оружие", "радиостанция"),
-    "WeaponNext": ("Оружие вперёд", "оружие", "радиостанция"),
-    "Up": ("Вверх", "спецмиссия", "наклон вверх"),
-    "Down": ("Вниз", "сигнал", "гудок, наклон вниз"),
-    "Pause": ("Пауза", "пауза", "пауза"),
-    "Camera": ("Сменить камеру", "камера", "камера"),
-    "Handbrake": ("Ручной тормоз", "—", "ручник"),
+    "MoveForward": ("Forward", "walk", "accelerate"),
+    "MoveBack": ("Back", "walk back", "brake"),
+    "MoveLeft": ("Left", "movement", "steer"),
+    "MoveRight": ("Right", "movement", "steer"),
+    "Walk": ("Walk", "short steps", "—"),
+    "Sprint": ("Sprint", "run", "not sent"),
+    "Jump": ("Jump", "jump", "brake"),
+    "EnterVehicle": ("Enter / exit", "vehicle", "vehicle"),
+    "Attack": ("Attack", "fire", "fire"),
+    "Aim": ("Aim", "aim", "not sent"),
+    "CenterCamera": ("Camera behind", "and pick up weapon", "pick up weapon"),
+    "WeaponPrevious": ("Previous weapon", "weapon", "radio"),
+    "WeaponNext": ("Next weapon", "weapon", "radio"),
+    "Up": ("Up", "side mission", "pitch up"),
+    "Down": ("Down", "horn cue", "horn, pitch down"),
+    "Pause": ("Pause", "pause", "pause"),
+    "Camera": ("Change camera", "camera", "camera"),
+    "Handbrake": ("Handbrake", "—", "handbrake"),
 }
 
-# Ключи ini-файла для кнопок геймпада (имена Xbox) и их отображение в двух стилях.
+# Pad ini keys (Xbox names) and display: Xbox, PlayStation, on-foot role.
 PAD_BUTTONS = (
     "PadA", "PadB", "PadX", "PadY",
     "PadLeftShoulder", "PadRightShoulder", "PadLeftTrigger", "PadRightTrigger",
@@ -51,26 +56,25 @@ PAD_BUTTONS = (
 )
 
 PAD_LABELS = {
-    # ini-ключ: (Xbox, PlayStation, что делает пешком)
-    "PadA": ("A", "Крестик", "бег"),
-    "PadB": ("B", "Круг", "атака"),
-    "PadX": ("X", "Квадрат", "прыжок"),
-    "PadY": ("Y", "Треугольник", "транспорт"),
-    "PadLeftShoulder": ("LB", "L1", "камера сзади"),
-    "PadRightShoulder": ("RB", "R1", "прицел"),
-    "PadLeftTrigger": ("LT", "L2", "тормоз"),
-    "PadRightTrigger": ("RT", "R2", "газ"),
-    "PadStart": ("Menu", "Start", "пауза"),
-    "PadBack": ("View", "Create", "камера"),
-    "PadDpadUp": ("↑ крестовины", "↑ крестовины", "спецмиссия"),
-    "PadDpadDown": ("↓ крестовины", "↓ крестовины", "гудок"),
-    "PadDpadLeft": ("← крестовины", "← крестовины", "оружие назад"),
-    "PadDpadRight": ("→ крестовины", "→ крестовины", "оружие вперёд"),
-    "PadLeftStickClick": ("LS", "L3", "гудок"),
-    "PadRightStickClick": ("RS", "R3", "ничего"),
+    "PadA": ("A", "Cross", "sprint"),
+    "PadB": ("B", "Circle", "attack"),
+    "PadX": ("X", "Square", "jump"),
+    "PadY": ("Y", "Triangle", "vehicle"),
+    "PadLeftShoulder": ("LB", "L1", "camera"),
+    "PadRightShoulder": ("RB", "R1", "aim"),
+    "PadLeftTrigger": ("LT", "L2", "brake"),
+    "PadRightTrigger": ("RT", "R2", "accelerate"),
+    "PadStart": ("Menu", "Start", "pause"),
+    "PadBack": ("View", "Create", "camera"),
+    "PadDpadUp": ("D-pad up", "D-pad up", "side mission"),
+    "PadDpadDown": ("D-pad down", "D-pad down", "horn"),
+    "PadDpadLeft": ("D-pad left", "D-pad left", "previous weapon"),
+    "PadDpadRight": ("D-pad right", "D-pad right", "next weapon"),
+    "PadLeftStickClick": ("LS", "L3", "horn"),
+    "PadRightStickClick": ("RS", "R3", "nothing"),
 }
 
-# Токен для отрисовки иконки (см. button_icons.py).
+# Token for button_icons.draw_pad().
 PAD_ICON_TOKEN = {
     "PadA": "a", "PadB": "b", "PadX": "x", "PadY": "y",
     "PadLeftShoulder": "leftshoulder", "PadRightShoulder": "rightshoulder",
@@ -142,7 +146,7 @@ _CANONICAL_KEYS = (
     )
 )
 
-# Сокращения, которые принимает рантайм: нормализованное имя -> каноническое.
+# Runtime aliases: normalized token -> canonical name.
 _KEY_ALIASES = {
     "shift": "LeftShift", "lshift": "LeftShift", "leftshift": "LeftShift",
     "rshift": "RightShift", "rightshift": "RightShift",
@@ -165,27 +169,27 @@ _KEY_ALIASES = {
 
 HOST_KEYS = frozenset(_CANONICAL_KEYS)
 
-# Подписи иконок клавиш и мыши для интерфейса.
+# English captions for key / mouse icons in the UI.
 KEY_CAPTIONS = {
-    "Space": "Пробел", "Enter": "Enter", "Escape": "Esc", "Tab": "Tab",
+    "Space": "Space", "Enter": "Enter", "Escape": "Esc", "Tab": "Tab",
     "Backspace": "Bksp", "LeftShift": "Shift L", "RightShift": "Shift R",
     "LeftCtrl": "Ctrl L", "RightCtrl": "Ctrl R", "LeftAlt": "Alt L",
     "RightAlt": "Alt R", "Up": "↑", "Down": "↓", "Left": "←", "Right": "→",
     "Delete": "Del", "Insert": "Ins", "Home": "Home", "End": "End",
     "PageUp": "PgUp", "PageDown": "PgDn", "Comma": ",", "Period": ".",
     "Minus": "-", "Equals": "=",
-    "MouseLeft": "ЛКМ", "MouseRight": "ПКМ", "MouseMiddle": "СКМ",
-    "Mouse4": "М4", "Mouse5": "М5", "WheelUp": "Колесо ↑", "WheelDown": "Колесо ↓",
+    "MouseLeft": "LMB", "MouseRight": "RMB", "MouseMiddle": "MMB",
+    "Mouse4": "M4", "Mouse5": "M5", "WheelUp": "Wheel ↑", "WheelDown": "Wheel ↓",
 }
 
 
 def normalize(text: str) -> str:
-    """Как рантайм: без пробелов, подчёркиваний и дефисов, в нижнем регистре."""
+    """Match the runtime: strip spaces, underscores and hyphens, lower-case."""
     return re.sub(r"[ \t_-]", "", text).lower()
 
 
 def canonical_key_name(token: str) -> str | None:
-    """Имя клавиши в том виде, как его пишет лаунчер, или None если не распознано."""
+    """Canonical key name as the launcher writes it, or None if unknown."""
     cleaned = token.strip()
     if not cleaned:
         return None
@@ -208,23 +212,34 @@ def canonical_key_name(token: str) -> str | None:
 
 
 def key_caption(name: str) -> str:
-    """Подпись клавиши для кнопки интерфейса."""
+    """Localized caption for a key or mouse binding in the UI."""
     if name.startswith("Numpad"):
         return f"Numpad {name[6:]}"
-    return KEY_CAPTIONS.get(name, name)
+    return t(KEY_CAPTIONS.get(name, name))
+
+
+def action_labels(action: str) -> tuple[str, str, str]:
+    """Localized (name, on foot, in vehicle) labels for an action."""
+    name, on_foot, in_car = ACTION_LABELS[action]
+    return t(name), t(on_foot), t(in_car)
+
+
+def pad_labels(pad: str) -> tuple[str, str, str]:
+    """Localized (Xbox, PlayStation, on-foot role) labels for a pad button."""
+    xbox, playstation, role = PAD_LABELS[pad]
+    return t(xbox), t(playstation), t(role)
 
 
 class ControlsConfig:
-    """Секция [Controls]: клавиши действий, действия кнопок геймпада и роли стиков."""
+    """[Controls] section: action keys, pad actions and stick roles."""
 
     def __init__(self, actions=None, pads=None, sticks=None):
         self.actions = {action: list((actions or DEFAULT_KEYS).get(action, [])) for action in ACTIONS}
         self.pads = {pad: list((pads or DEFAULT_PAD).get(pad, [])) for pad in PAD_BUTTONS}
         self.sticks = dict(sticks or DEFAULT_STICKS)
 
-    # --- доступ ---
     def pad_buttons_for(self, action: str) -> list[str]:
-        """Кнопки геймпада, которые ведут это действие (в порядке PAD_BUTTONS)."""
+        """Pad buttons that drive this action, in PAD_BUTTONS order."""
         return [pad for pad in PAD_BUTTONS if action in self.pads[pad]]
 
     def bind_key(self, action: str, name: str, slot: int | None = None) -> bool:
@@ -246,7 +261,7 @@ class ControlsConfig:
             self.actions[action].remove(name)
 
     def toggle_pad(self, pad: str, action: str) -> bool:
-        """Привязать/отвязать кнопку геймпада к действию. Возвращает итоговое состояние."""
+        """Bind or unbind a pad button to an action. Returns the bound state."""
         if action in self.pads[pad]:
             self.pads[pad].remove(action)
         elif len(self.pads[pad]) < MAX_PER_BINDING:
@@ -258,7 +273,6 @@ class ControlsConfig:
         self.pads = {pad: list(DEFAULT_PAD[pad]) for pad in PAD_BUTTONS}
         self.sticks = dict(DEFAULT_STICKS)
 
-    # --- значения ini ---
     def ini_values(self) -> dict[str, str]:
         values = {action: ",".join(self.actions[action]) or "None" for action in ACTIONS}
         values.update({pad: ",".join(self.pads[pad]) or "None" for pad in PAD_BUTTONS})
@@ -292,10 +306,10 @@ class ControlsConfig:
 
 
 def read_controls(ini_path: Path) -> dict[str, str]:
-    """Пары имя=значение из секции [Controls]."""
+    """Name=value pairs from the [Controls] section."""
     values: dict[str, str] = {}
     text = ini_path.read_text(encoding="utf-8")
-    section = _section_range(text)
+    section = _section_range(text, "controls")
     if section is None:
         return values
     start, end = section
@@ -309,11 +323,11 @@ def read_controls(ini_path: Path) -> dict[str, str]:
 
 
 def write_controls(ini_path: Path, values: dict[str, str]) -> None:
-    """Заменить управляемые имена в [Controls], не трогая комментарии и остальной файл."""
+    """Replace managed keys in [Controls] without touching comments or other sections."""
     text = ini_path.read_text(encoding="utf-8")
-    section = _section_range(text)
+    section = _section_range(text, "controls")
     if section is None:
-        raise ValueError(f"В {ini_path} нет секции [Controls]")
+        raise ValueError(t("No [Controls] section in {path}", path=ini_path))
     start, end = section
     lines = text.splitlines(keepends=True)
     written: set[str] = set()
@@ -334,13 +348,80 @@ def write_controls(ini_path: Path, values: dict[str, str]) -> None:
     ini_path.write_text("".join(lines), encoding="utf-8", newline="")
 
 
-def _section_range(text: str) -> tuple[int, int] | None:
-    """Номера строк секции [Controls]: от заголовка до следующей секции."""
+PROMPT_STYLES = ("original", "xbox", "kb")
+
+
+def read_prompt_style(ini_path: Path) -> str:
+    """Display.ButtonPrompts: original PlayStation glyphs, xbox, or kb."""
+    if not ini_path.exists():
+        return "original"
+    values = read_section(ini_path, "display")
+    raw = values.get("ButtonPrompts") or values.get("PromptStyle") or "original"
+    style = raw.strip().lower()
+    if style in ("psp", "playstation", "off", "none", ""):
+        return "original"
+    if style in ("keyboard", "keyboardmouse", "km", "kbm"):
+        return "kb"
+    return style if style in PROMPT_STYLES else "original"
+
+
+def write_prompt_style(ini_path: Path, style: str) -> None:
+    value = style if style in PROMPT_STYLES else "original"
+    write_section_keys(ini_path, "Display", {"ButtonPrompts": value.capitalize() if value == "original" else value})
+
+
+def read_section(ini_path: Path, section: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    text = ini_path.read_text(encoding="utf-8")
+    span = _section_range(text, section)
+    if span is None:
+        return values
+    start, end = span
+    for line in text.splitlines()[start:end]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(";") or "=" not in stripped:
+            continue
+        name, _, value = stripped.partition("=")
+        values[name.strip()] = value.strip()
+    return values
+
+
+def write_section_keys(ini_path: Path, section: str, values: dict[str, str]) -> None:
+    text = ini_path.read_text(encoding="utf-8") if ini_path.exists() else ""
+    span = _section_range(text, section)
+    if span is None:
+        ending = "\n"
+        extra = [f"[{section}]{ending}"] + [f"{name}={values[name]}{ending}" for name in values]
+        ini_path.write_text(text + ("" if not text or text.endswith(("\n", "\r\n")) else "\n") + "".join(extra),
+                            encoding="utf-8", newline="")
+        return
+    start, end = span
+    lines = text.splitlines(keepends=True)
+    written: set[str] = set()
+    for index in range(start, end):
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith(";") or "=" not in stripped:
+            continue
+        name = stripped.partition("=")[0].strip()
+        if name in values and name not in written:
+            ending = "\r\n" if lines[index].endswith("\r\n") else "\n"
+            lines[index] = f"{name}={values[name]}{ending}"
+            written.add(name)
+    missing = [name for name in values if name not in written]
+    if missing:
+        ending = "\r\n" if lines[end - 1].endswith("\r\n") else "\n"
+        lines[end:end] = [f"{name}={values[name]}{ending}" for name in missing]
+    ini_path.write_text("".join(lines), encoding="utf-8", newline="")
+
+
+def _section_range(text: str, section: str = "controls") -> tuple[int, int] | None:
+    """Line range of `[section]`: from the header up to the next section."""
+    wanted = f"[{section.lower()}]"
     lines = text.splitlines()
     start = None
     for number, line in enumerate(lines):
         stripped = line.strip().lower()
-        if stripped == "[controls]":
+        if stripped == wanted:
             start = number
         elif start is not None and stripped.startswith("[") and stripped.endswith("]"):
             return start, number
