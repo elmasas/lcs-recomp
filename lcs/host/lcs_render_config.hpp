@@ -52,6 +52,9 @@ struct DisplayConfiguration {
     bool show_fps{false};
     bool vsync{false};
     float hud_scale{1.0f};
+    // Pictures shown by the game's button prompts: "original" or a folder name
+    // under <config dir>/textures.
+    std::string prompt_style{"original"};
 };
 
 struct PresentationRectangle {
