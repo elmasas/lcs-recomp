@@ -5,3 +5,4 @@
 .vs/
 .vscode/
 /docker/ccache-*/
+/tools/__pycache__/
