@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_world_detail.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -997,26 +998,26 @@ L_08950138:
     ctx.gpr[4] = (2233u << 16u);
     ctx.gpr[18] = (16u << 16u);
     ctx.gpr[19] = (ctx.gpr[4] + static_cast<std::uint32_t>(-26464));
-    ctx.gpr[18] = (ctx.gpr[18] + static_cast<std::uint32_t>(26624));
+    ctx.gpr[18] = lcs::kWorldBufferSize;
     ctx.gpr[4] = (ctx.gpr[19] | 0u);
     ctx.gpr[31] = (0x08950154u);
     ctx.gpr[5] = (ctx.gpr[18] | 0u);
-    if (rt.invoke_chained_direct<&recomp_unit_0167_entry, 167u, 698u, 0x08AA3474u>(ctx, &aot_mem) && ctx.pc == 0x08950154u) goto L_08950154;
-    return;
+    ctx.gpr[2] = lcs::kWorldBufferBase + 0u * lcs::kWorldBufferSize;
+    goto L_08950154;
 L_08950154:
     aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(28), ctx.gpr[2]);
     ctx.gpr[4] = (ctx.gpr[19] | 0u);
     ctx.gpr[31] = (0x08950164u);
     ctx.gpr[5] = (ctx.gpr[18] | 0u);
-    if (rt.invoke_chained_direct<&recomp_unit_0167_entry, 167u, 698u, 0x08AA3474u>(ctx, &aot_mem) && ctx.pc == 0x08950164u) goto L_08950164;
-    return;
+    ctx.gpr[2] = lcs::kWorldBufferBase + 1u * lcs::kWorldBufferSize;
+    goto L_08950164;
 L_08950164:
     aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(72), ctx.gpr[2]);
     ctx.gpr[4] = (ctx.gpr[19] | 0u);
     ctx.gpr[31] = (0x08950174u);
     ctx.gpr[5] = (ctx.gpr[18] | 0u);
-    if (rt.invoke_chained_direct<&recomp_unit_0167_entry, 167u, 698u, 0x08AA3474u>(ctx, &aot_mem) && ctx.pc == 0x08950174u) goto L_08950174;
-    return;
+    ctx.gpr[2] = lcs::kWorldBufferBase + 2u * lcs::kWorldBufferSize;
+    goto L_08950174;
 L_08950174:
     aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(120), ctx.gpr[2]);
     ctx.gpr[6] = (aot_mem.aot_load32(ctx.gpr[16] + static_cast<std::uint32_t>(72)));
@@ -1071,6 +1072,8 @@ L_089501BC:
       goto L_089501C8;
     }
 L_089501C8:
+    // Host scenery buffers survive reinitialization; no VRAM backup is needed.
+    goto L_089501F8;
     ctx.gpr[31] = (0x089501D0u);
     // nop
     ctx.pc = 0x08B0B9D4u;
@@ -1145,6 +1148,8 @@ L_08950248:
     ctx.pc = 0x08B0B9D4u;
     return;
 L_08950254:
+    // Retain the host buffer in place instead of backing it up into 2 MiB VRAM.
+    goto L_08950268;
     ctx.gpr[6] = (16u << 16u);
     ctx.gpr[5] = (aot_mem.aot_load32(ctx.gpr[16] + static_cast<std::uint32_t>(28)));
     ctx.gpr[4] = (ctx.gpr[2] | 0u);
@@ -3588,6 +3593,7 @@ L_089517F8:
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(28), ctx.gpr[6]);
     ctx.gpr[31] = (0x0895181Cu);
     ctx.gpr[4] = (ctx.gpr[29] + static_cast<std::uint32_t>(20));
+    if (lcs::expand_world_sector(rt, ctx.gpr[16], ctx.gpr[5], ctx.gpr[6])) goto L_0895181C;
     if (rt.invoke_chained_direct<&recomp_unit_0025_entry, 25u, 565u, 0x0886B040u>(ctx, &aot_mem) && ctx.pc == 0x0895181Cu) goto L_0895181C;
     return;
 L_0895181C:
@@ -6620,6 +6626,8 @@ L_089530DC:
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(300), ctx.gpr[30]);
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(304), ctx.gpr[31]);
     ctx.gpr[21] = (ctx.gpr[4] | 0u);
+    // Refresh model state without swapping the active and fading sectors.
+    if (lcs::begin_world_detail_refresh(rt, ctx.gpr[21], ctx.gpr[29])) goto L_08953378;
     ctx.gpr[31] = (0x08953118u);
     // nop
     goto L_08952724;
@@ -6949,6 +6957,8 @@ L_089533E8:
       goto L_089533F8;
     }
 L_089533F8:
+    // The active sector is settled here; register and initialize the selected lists.
+    lcs::select_world_detail(rt, ctx.gpr[21]);
     ctx.gpr[4] = (aot_mem.aot_load32(ctx.gpr[21] + static_cast<std::uint32_t>(32)));
     ctx.gpr[5] = (aot_mem.aot_load32(ctx.gpr[21] + static_cast<std::uint32_t>(36)));
     { const bool branch_taken = ctx.gpr[4] == ctx.gpr[5];

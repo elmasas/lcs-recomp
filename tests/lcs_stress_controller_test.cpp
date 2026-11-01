@@ -68,6 +68,19 @@ int main() {
             check(!lcs::stress_savedata_mutates(mode), "read-only savedata operation blocked");
         const auto hold = lcs::parse_direct_order("hold");
         check(hold.hold && !hold.shot && !hold.has_target, "hold should stand");
+        for (float distance : {1.f, 1.25f, 1.5f, 1.75f, 2.f, 2.5f, 3.f, 4.f})
+            check(lcs::parse_direct_order("distance " + std::to_string(distance)).view_distance == distance,
+                  "QA distance command must accept every menu step");
+        for (const auto command : {"distance", "distance nan", "distance 0", "distance 4.5", "distance 2 extra"})
+            check(lcs::parse_direct_order(command).view_distance == 0, "invalid QA distance must be ignored");
+        const auto camera = lcs::apply_direct_order(lcs::parse_direct_order("camera 0 255"), o).input;
+        check(camera.camera_x == -127 && camera.camera_y == 127,
+              "direct camera axes must cover the stick range");
+        check(camera.analog_x == 128 && camera.analog_y == 128 && !camera.accelerate &&
+              !camera.brake && camera.buttons == 0, "camera command must hold the player still");
+        for (const auto command : {"camera", "camera 128", "camera -1 128", "camera 256 128",
+                                   "camera 128 128 extra"})
+            check(lcs::parse_direct_order(command).hold, "invalid camera command must hold");
         const auto shot = lcs::parse_direct_order("shot goto 12.5 -4");
         check(shot.shot && shot.has_target && shot.target_x == 12.5f && shot.target_y == -4.0f,
               "shot goto should keep both");

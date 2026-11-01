@@ -129,6 +129,22 @@ DirectOrder parse_direct_order(std::string_view line) {
         if (!take_word(line, word)) return order;
     }
     if (word == "hold") return order;
+    if (word == "distance") {
+        float value{};
+        if (take_float(line, value) && value >= 1 && value <= 4 && trim_copy(line).empty())
+            order.view_distance = value;
+        return order;
+    }
+    if (word == "camera") {
+        unsigned long x = 128, y = 128;
+        if (!take_uint(line, x) || !take_uint(line, y) || x > 255 || y > 255 ||
+            !trim_copy(line).empty()) return order;
+        order.hold = false;
+        order.manual = true;
+        order.camera_x = std::max(-127, static_cast<int>(x) - 128);
+        order.camera_y = std::max(-127, static_cast<int>(y) - 128);
+        return order;
+    }
     if (word == "goto") {
         float x = 0.0f, y = 0.0f;
         if (!take_float(line, x) || !take_float(line, y)) return order;
@@ -191,6 +207,8 @@ DirectOrder parse_direct_order(std::string_view line) {
 DirectMove apply_direct_order(const DirectOrder &order, const StressObservation &observation) {
     DirectMove move;
     if (order.manual) {
+        move.input.camera_x = order.camera_x;
+        move.input.camera_y = order.camera_y;
         move.input.analog_x = order.analog_x;
         move.input.analog_y = order.analog_y;
         move.input.buttons = order.buttons;

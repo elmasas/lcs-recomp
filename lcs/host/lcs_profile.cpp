@@ -13,6 +13,7 @@
 #include "lcs_lang.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_stress_test.hpp"
+#include "lcs_world_detail.hpp"
 
 #include "psprecomp/common.hpp"
 
@@ -1888,6 +1889,7 @@ void ge_worker_shutdown() {
 }
 
 void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start) {
+    reset_world_detail();
     thread_table = ThreadTable{};
     lcs_menu_init(runtime);
 

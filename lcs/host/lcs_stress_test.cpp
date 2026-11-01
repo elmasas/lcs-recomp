@@ -1,6 +1,7 @@
 #include "lcs_stress_test.hpp"
 #include "lcs_controls.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_render_config.hpp"
 #include "ge_gpu_backend.hpp"
 
 #include <atomic>
@@ -154,6 +155,7 @@ void write_direct_state(double seconds, const StressObservation &observation) {
     last = seconds;
     std::ofstream out(direct_dir / "state.json", std::ios::trunc);
     out << "{\"t\":" << seconds
+        << ",\"view_distance\":" << view_distance_scale()
         << ",\"ready\":" << (observation.ready ? "true" : "false")
         << ",\"driving\":" << (observation.driving ? "true" : "false")
         << ",\"menu\":" << (observation.menu ? "true" : "false")
@@ -210,7 +212,10 @@ HostInputState stress_test_input(psprecomp::Runtime &runtime, HostInputState phy
     lcs_camera_set_axes(input.camera_x, input.camera_y);
     lcs_set_host_drive_inputs(input.accelerate, input.brake, input.throttle, input.brake_pressure);
     if (!direct_dir.empty()) {
-        if (refresh_direct_order() && direct_order.shot) shot_request.store(true);
+        if (refresh_direct_order()) {
+            if (direct_order.shot) shot_request.store(true);
+            if (direct_order.view_distance) lcs_set_view_distance(direct_order.view_distance);
+        }
         if (observation.ready) {
             const DirectMove move = apply_direct_order(direct_order, observation);
             input = move.input;
