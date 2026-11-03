@@ -20,7 +20,7 @@ the game and settings live).
 - Icon display: PlayStation, Xbox, or keyboard and mouse — both in the
   launcher table and in the in-game HUD. Written to `Display.ButtonPrompts`
   (`Original` / `xbox` / `kb`). On save the launcher builds
-  `lcs/config/textures/<style>/` from `_source`.
+  `lcs/config/textures/<style>/` from `_source` (see HUD packs below).
 - Bind: click the action name or +, then press a key, mouse button or
   scroll the wheel. Esc cancels.
 - Remove or replace: click the icon (right-click works too).
@@ -33,6 +33,34 @@ the game and settings live).
 
 Needs: 7-Zip (`winget install -e --id 7zip.7zip`); `pspdecrypt.exe` is
 already inside the exe.
+
+### HUD prompt packs (Xbox / keyboard)
+
+PlayStation is the game default and needs no extra files. Xbox and
+keyboard packs paint over dumped HUD canvases. Those dumps are **your
+disc's textures** and are gitignored under `lcs/config/textures/` — they
+are not shipped in the repository.
+
+1. Build and run the game with dumps enabled, e.g. in PowerShell:
+   ```
+   $env:LCS_TEXTURE_DUMP="1"
+   # then launch LCSNative (or use the launcher after setting the env var)
+   ```
+   Open a mission tutorial and the pause menu so the HUD atlases upload.
+   Files land in `lcs/config/textures_dump/{signature}_{w}x{h}.rgba`.
+2. Install the ones the pack builder needs:
+   ```
+   python tools/prompt_pack.py install-sources
+   ```
+   This copies matching dumps to `lcs/config/textures/_source/{signature}.rgba`.
+3. In the launcher choose **Xbox** or **Keyboard and mouse**, then **Save**.
+   The launcher rebuilds `textures/xbox/` or `textures/kb/` and writes
+   `Display.ButtonPrompts`. Fully quit and relaunch `LCSNative` so the
+   process cache picks up the new files.
+
+If `_source` is incomplete, Save / Launch shows an error instead of
+silently leaving PlayStation glyphs on screen. Build a pack from the CLI
+with `python tools/prompt_pack.py xbox` or `python tools/prompt_pack.py kb`.
 
 ### Language (i18n)
 

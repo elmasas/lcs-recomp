@@ -278,6 +278,9 @@ class GameTab(ttk.Frame):
             return
         try:
             prompt_pack.build_prompt_pack(read_prompt_style(launcher.INI_PATH))
+        except prompt_pack.PromptPackError as error:
+            messagebox.showerror(t("Could not build HUD prompts"), str(error), parent=self)
+            self.log_line(t("[!] Could not build prompt icons: {error}", error=error))
         except Exception as error:
             self.log_line(t("[!] Could not build prompt icons: {error}", error=error))
         env = dict(os.environ, PSPRECOMP_CONFIG=str(launcher.INI_PATH))
@@ -570,6 +573,9 @@ class ControlsTab(ttk.Frame):
             self.cfg.save(launcher.INI_PATH)
             write_prompt_style(launcher.INI_PATH, self._prompt_style())
             prompt_pack.build_prompt_pack(self._prompt_style(), self.cfg)
+        except prompt_pack.PromptPackError as error:
+            messagebox.showerror(t("Could not build HUD prompts"), str(error), parent=self)
+            return False
         except (OSError, ValueError) as error:
             messagebox.showerror(t("Could not save"), str(error), parent=self)
             return False

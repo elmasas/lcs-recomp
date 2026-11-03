@@ -4,17 +4,24 @@ The GE uploads hashed RGBA8 pictures. `lcs_prompt_textures.cpp` swaps a
 matching file from `lcs/config/textures/<style>/`. This writes those files
 from the dumped originals in `_source/` and the current keyboard bindings.
 
-Keyboard and mouse glyphs follow Hell's Gate `MouseMask` and Uncharted
-`DrawMouse` / `DrawKey` (see buttons-extracted.tar.gz): stadium mouse from
-above with the pressed button filled, rounded keycaps with 3x5 labels.
+Glyph painting is original to this tree: stadium-style mouse silhouettes,
+rounded keycaps, and 3x5 / 5x5 pixel labels. Game texture dumps under
+`_source/` are not shipped (copyrighted disc assets); populate them locally
+via `LCS_TEXTURE_DUMP` and `python tools/prompt_pack.py install-sources`.
 """
 
 from __future__ import annotations
 
 import math
+import re
+import shutil
 from pathlib import Path
 
 from lcs_controls_model import ControlsConfig, key_caption
+
+
+class PromptPackError(RuntimeError):
+    """Raised when HUD source dumps are missing or a pack cannot be built."""
 
 # PSP face / shoulder glyphs in the dumped HUD pictures.
 PSP_TO_PAD = {
@@ -255,7 +262,7 @@ def _mouse_mask(size: int, button: int, wheel: int = 0) -> list[list[float]]:
     mask = _sample_grid(size, inside)
     if wheel == 0:
         return mask
-    # Chevron above (up) or below (down), Uncharted wheel cue.
+    # Chevron above (up) or below (down) for wheel direction.
     def arrow(px: float, py: float) -> bool:
         ay = top - 0.1 if wheel > 0 else bottom + 0.1
         tip = top - size * 0.12 if wheel > 0 else bottom + size * 0.12
@@ -284,7 +291,7 @@ def _rounded_rect(px, py, cx, cy, hw, hh, radius) -> bool:
 
 
 def _keycap_layers(size: int, label: str) -> tuple[list[list[float]], list[list[float]]]:
-    """(cap outline, letter) coverage. Cap from Uncharted DrawKey, letters 3x5."""
+    """(cap outline, letter) coverage masks for a rounded keycap cell."""
     pad = 1.1
     x0, y0, x1, y1 = pad, pad, size - pad, size - pad
     cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
@@ -485,22 +492,102 @@ def _write(path: Path, pixels: bytearray) -> None:
     path.write_bytes(bytes(pixels))
 
 
+def required_source_signatures(style: str = "kb") -> list[str]:
+    """Signatures that must exist under `_source/` before a pack can be built."""
+    pack_style = "kb" if style.lower() in ("kb", "keyboard", "kbm") else "xbox"
+    names = list(ATLAS_CELLS.keys())
+    for signature, glyph in STANDALONE.items():
+        if glyph == "n" and pack_style == "xbox":
+            continue
+        names.append(signature)
+    # Preserve order, drop duplicates.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return ordered
+
+
+def missing_source_files(style: str = "kb", config_dir: Path | None = None) -> list[Path]:
+    source = (config_dir or _config_dir()) / "textures" / "_source"
+    return [source / f"{sig}.rgba" for sig in required_source_signatures(style)
+            if not (source / f"{sig}.rgba").exists()]
+
+
+_DUMP_NAME = re.compile(r"^([0-9a-fA-F]{16})_(\d+)x(\d+)\.rgba$")
+
+
+def install_sources_from_dump(dump_dir: Path | None = None,
+                              config_dir: Path | None = None) -> list[Path]:
+    """Copy `textures_dump/{sig}_{w}x{h}.rgba` into `textures/_source/{sig}.rgba`.
+
+    `LCS_TEXTURE_DUMP=1` writes the sized names; pack building expects bare
+    signature filenames. Returns the list of installed `_source` paths.
+    """
+    root = config_dir or _config_dir()
+    dump = Path(dump_dir) if dump_dir else root / "textures_dump"
+    source = root / "textures" / "_source"
+    if not dump.is_dir():
+        raise PromptPackError(
+            f"Dump folder not found: {dump}\n"
+            "Run the game once with LCS_TEXTURE_DUMP=1 (or a path), then retry.")
+    source.mkdir(parents=True, exist_ok=True)
+    wanted = set(required_source_signatures("kb"))
+    installed: list[Path] = []
+    for path in sorted(dump.glob("*.rgba")):
+        match = _DUMP_NAME.match(path.name)
+        if not match:
+            continue
+        signature, width, height = match.group(1).lower(), int(match.group(2)), int(match.group(3))
+        if signature not in wanted:
+            continue
+        # Prefer the exact atlas / chip sizes we paint.
+        if signature in ATLAS_CELLS and (width, height) != (256, 256):
+            continue
+        if signature in STANDALONE and (width, height) != (16, 16):
+            continue
+        dest = source / f"{signature}.rgba"
+        shutil.copy2(path, dest)
+        installed.append(dest)
+    if not installed:
+        raise PromptPackError(
+            f"No matching HUD dumps in {dump}.\n"
+            "Expected files like 37bf52ac7d5c44c4_256x256.rgba from LCS_TEXTURE_DUMP.")
+    return installed
+
+
 def build_prompt_pack(style: str, cfg: ControlsConfig | None = None,
                       config_dir: Path | None = None) -> Path | None:
-    """Write `textures/<style>/` replacements. Original PlayStation needs no files."""
+    """Write `textures/<style>/` replacements. Original PlayStation needs no files.
+
+    Raises PromptPackError when Xbox/kb is requested but `_source` dumps are
+    missing, so the launcher cannot silently leave PlayStation glyphs in place.
+    """
     style = style.lower()
-    if style in ("original", "psp", "playstation", "off", "none"):
+    if style in ("original", "psp", "playstation", "off", "none", ""):
         return None
     root = config_dir or _config_dir()
     source = root / "textures" / "_source"
     dest = root / "textures" / ("kb" if style in ("kb", "keyboard", "kbm") else "xbox")
     pack_style = "kb" if dest.name == "kb" else "xbox"
+    missing = missing_source_files(pack_style, root)
+    if missing:
+        preview = "\n".join(f"  - {path.name}" for path in missing[:8])
+        more = "" if len(missing) <= 8 else f"\n  … and {len(missing) - 8} more"
+        raise PromptPackError(
+            "HUD prompt sources are missing under "
+            f"{source}.\n{preview}{more}\n\n"
+            "These files are dumps from your own disc (not shipped in the repo).\n"
+            "1. Set LCS_TEXTURE_DUMP=1 and play until tutorial/pause HUD appears.\n"
+            "2. Run: python tools/prompt_pack.py install-sources\n"
+            "3. Save Xbox or Keyboard & mouse prompts again in the launcher.")
     cfg = cfg or ControlsConfig.load(root / "LCSNative.ini") if (root / "LCSNative.ini").exists() else ControlsConfig()
     dest.mkdir(parents=True, exist_ok=True)
+    written = 0
     for signature, cells in ATLAS_CELLS.items():
         src = source / f"{signature}.rgba"
-        if not src.exists():
-            continue
         pixels = _load_rgba(src, 256, 256)
         white_alpha = signature == "37bf52ac7d5c44c4"
         for col, row, glyph in cells:
@@ -510,21 +597,30 @@ def build_prompt_pack(style: str, cfg: ControlsConfig | None = None,
             _clear_cell(pixels, 256, cx, cy)
             _draw_prompt(pixels, 256, cx, cy, 16, glyph, pack_style, cfg, white_alpha, menu=False)
         _write(dest / f"{signature}.rgba", pixels)
+        written += 1
     for signature, glyph in STANDALONE.items():
-        src = source / f"{signature}.rgba"
-        if not src.exists():
-            continue
         if glyph == "n" and pack_style == "xbox":
             continue
+        src = source / f"{signature}.rgba"
         pixels = _load_rgba(src, 16, 16)
         _clear_cell(pixels, 16, 0, 0)
         _draw_prompt(pixels, 16, 0, 0, 16, glyph, pack_style, cfg, white_alpha=False, menu=True)
         _write(dest / f"{signature}.rgba", pixels)
+        written += 1
+    if written == 0:
+        raise PromptPackError(f"No prompt textures were written to {dest}.")
     return dest
 
 
 if __name__ == "__main__":
     import sys
     kind = sys.argv[1] if len(sys.argv) > 1 else "xbox"
-    path = build_prompt_pack(kind)
-    print(path or "original (no pack)")
+    if kind in ("install-sources", "install_sources"):
+        dump = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+        paths = install_sources_from_dump(dump)
+        print(f"Installed {len(paths)} source texture(s):")
+        for path in paths:
+            print(f"  {path}")
+    else:
+        path = build_prompt_pack(kind)
+        print(path or "original (no pack)")

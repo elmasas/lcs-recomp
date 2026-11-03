@@ -59,6 +59,7 @@ RU: dict[str, str] = {
         "LCSNative.exe не найден — соберите проект",
     "[!] Could not build prompt icons: {error}":
         "[!] Не удалось собрать иконки подсказок: {error}",
+    "Could not build HUD prompts": "Не удалось собрать HUD-подсказки",
     "[+] Launching {name} — controls: {ini}":
         "[+] Запуск {name} — настройки управления: {ini}",
 
