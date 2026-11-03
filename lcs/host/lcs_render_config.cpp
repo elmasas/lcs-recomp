@@ -193,6 +193,17 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Display.HudScale must be between 0.25 and 1.0");
         return;
     }
+    if (key == "buttonprompts" || key == "promptstyle") {
+        const std::string style = lowercase_copy(trim_copy(value));
+        const std::string forbidden = "/\\<>:\"|?* ";
+        if (style.size() > 32 || style.find_first_of(forbidden) != std::string::npos ||
+            style.find("..") != std::string::npos)
+            warning(config, line,
+                    "Display.ButtonPrompts expects Original or a folder name");
+        else
+            config.display.prompt_style = style;
+        return;
+    }
     warning(config, line, "unknown [Display] key '" + key + "'");
 }
 
