@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_world_detail.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -8499,6 +8500,7 @@ L_08AA3704:
     ctx.pc = jump_target;
     return;
 L_08AA372C:
+    if (lcs::is_world_buffer(psprecomp::GuestMemory::canonical(ctx.gpr[5]))) { ctx.pc = ctx.gpr[31]; return; }
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-32));
     ctx.gpr[6] = (ctx.gpr[5] | 0u);
     ctx.gpr[5] = (ctx.gpr[4] | 0u);

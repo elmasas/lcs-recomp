@@ -82,6 +82,8 @@ behaviour. The first word selects the order:
 | Order | Meaning |
 | --- | --- |
 | `hold` | Stand still. |
+| `distance SCALE` | Hold still and apply view distance 1-4; telemetry reports `view_distance` to verify the change. |
+| `camera X Y` | Hold still and turn the camera with 0-255 stick axes (128 is centred). Use `hold` to stop turning. |
 | `goto X Y [RADIUS]` | Walk to world position X, Y and report `arrived` within RADIUS (default 2). |
 | `stick AX AY BUTTONS` | Raw input: stick axes 0-255 (128 is centred) and a PSP button bitmask. |
 | `drive STEERING THROTTLE BRAKE [PITCH]` | Vehicle control with independent 0-255 pressures. PITCH is the stick's vertical axis (default 128) and is used for wheelies. |
@@ -120,3 +122,38 @@ python3 lcs/scripts/qa_safehouse_bike.py --output out/stress/my-bike-qa --second
 ```
 
 Existing output directories are rejected so previous evidence is not overwritten.
+
+## Terrain detail
+
+Set `Rendering.ViewDistance` to 2 or higher in the configuration passed with `--config`
+to exercise detailed world scenery. The F10 view-distance setting can also switch
+between the original sector scenery (below 2) and the detailed scenery (2-4).
+The game reads opaque scenery from neighbouring sectors and replaces coarse
+models when a detailed model has matching world-space bounds. Unmatched distant
+models and blended scenery retain their original lists. Game assets on disk are
+unchanged.
+
+Use the recorded block loop to inspect the grassy hill across the street from
+the safehouse, the church, and the streets while crossing sector boundaries.
+Terrain quality is a visual check; the route's `PASS` does not assert it.
+
+## Every view-distance step
+
+Run the full block route separately at 1, 1.25, 1.5, 1.75, 2, 2.5, 3, and 4:
+
+```bash
+python3 lcs/scripts/qa_view_distance.py --record
+```
+
+This opt-in matrix takes about 16 minutes. Each setting gets its own copied
+configuration, route result, recording, and logs; `results.json` collects all
+results. A route failure is reported and the remaining settings still run.
+Test live transitions through all eight steps and back down in one game:
+
+```bash
+python3 lcs/scripts/qa_view_distance.py --live --record
+```
+
+The live sweep uses the same setter as F10 and verifies the applied distance in
+telemetry. It faces the grassy hill and captures each step for visual inspection; buildings remaining
+visible is a visual check, separate from the runner's numeric PASS.

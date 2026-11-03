@@ -46,6 +46,7 @@ struct DirectOrder {
     bool shot{};
     bool has_target{};
     bool manual{};
+    float view_distance{};
     float target_x{};
     float target_y{};
     float arrival_radius{2.0f};
@@ -55,6 +56,8 @@ struct DirectOrder {
     std::uint8_t throttle{};
     std::uint8_t brake_pressure{};
     bool pressure_mode{};
+    int camera_x{};
+    int camera_y{};
 };
 
 struct DirectMove {

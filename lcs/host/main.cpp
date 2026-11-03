@@ -78,7 +78,8 @@ int main(int argc, char **argv) {
 
         auto elf = psprecomp::Elf32Image::from_file(elf_path);
 
-        psprecomp::Runtime runtime;
+        // The upper 32 MiB holds host-managed scenery; guest heaps and stacks stay in the lower half.
+        psprecomp::Runtime runtime(64u * 1024u * 1024u);
         runtime.set_game_root(game_root);
 
         const auto stats = elf.load_and_relocate(runtime.memory(), psprecomp::kDefaultPspUserLoadBase);

@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_world_detail.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -1423,6 +1424,12 @@ L_0895443C:
 L_08954448:
     ctx.gpr[31] = (0x08954450u);
     ctx.gpr[4] = (ctx.gpr[20] | 0u);
+    // Switching lists requires the game's resource registration and instance
+    // flag initialization, just as activating a newly streamed sector does.
+    if (lcs::request_world_detail_refresh(rt, ctx.gpr[20], aot_mem.aot_load32(ctx.gpr[29] + 516u))) {
+        if (rt.invoke_chained_direct<&recomp_unit_0083_entry, 83u, 565u, 0x089530DCu>(ctx, &aot_mem) && ctx.pc == 0x08954450u) goto L_08954450;
+        return;
+    }
     if (rt.invoke_chained_direct<&recomp_unit_0083_entry, 83u, 448u, 0x08952724u>(ctx, &aot_mem) && ctx.pc == 0x08954450u) goto L_08954450;
     return;
 L_08954450:
