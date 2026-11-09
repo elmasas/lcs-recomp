@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -371,6 +372,11 @@ void ge_gpu_backend_note_through_extent(const GeGpuDrawDescriptor &draw,
     std::uint32_t base_width, std::uint32_t base_height,
     std::uint32_t mip_levels, std::vector<std::byte> rgba8) noexcept;
 
+// An image that never changes while this pointer lives (a texture pack's): shared rather than copied, and not hashed.
+[[nodiscard]] bool ge_gpu_backend_upload_shared_texture(
+    const GeGpuDrawDescriptor &draw, std::uint32_t width, std::uint32_t height,
+    std::shared_ptr<const std::vector<std::byte>> rgba8) noexcept;
+
 [[nodiscard]] bool ge_gpu_backend_copy_last_texture_rgba(
     std::span<std::byte> destination) noexcept;
 
@@ -400,6 +406,9 @@ void ge_gpu_backend_set_display_framebuffer(std::uint32_t address,
 void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &height) noexcept;
 
 [[nodiscard]] bool ge_gpu_backend_finish_color_frame(std::uint64_t vblank) noexcept;
+// A frame of the host's own interface alone, for when the game isn't drawing yet. Game thread, with the GE idle.
+[[nodiscard]] bool ge_gpu_backend_supports_host_frame() noexcept;
+[[nodiscard]] bool ge_gpu_backend_present_host_frame() noexcept;
 
 // The list-split flush sets this false. Only the present finish is shown.
 inline bool &ge_finish_shows_this_frame() noexcept {

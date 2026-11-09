@@ -1,5 +1,14 @@
 // LCS (GTA: Liberty City Stories) kernel HLE.
 
+#include "lcs_frontend_menu.hpp"
+#include "lcs_frontend_options.hpp"
+#include "lcs_pause_menu.hpp"
+#include "lcs_radio_wheel.hpp"
+#include "lcs_save_slots.hpp"
+#include "lcs_display_menu.hpp"
+#include "lcs_state.hpp"
+#include "lcs_state_io.hpp"
+#include "lcs_texture_pack.hpp"
 #include "lcs_profile.hpp"
 #include "display_window.hpp"
 #include "lcs_ge_exec.hpp"
@@ -12,7 +21,10 @@
 #include "lcs_frame_limit.hpp"
 #include "lcs_lang.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_perf_log.hpp"
+#include "lcs_render_config.hpp"
 #include "lcs_stress_test.hpp"
+#include "lcs_trainer.hpp"
 #include "lcs_world_detail.hpp"
 
 #include "psprecomp/common.hpp"
@@ -197,6 +209,7 @@ struct PendingGeCallback {
 };
 
 struct DirectoryHandle {
+    std::filesystem::path path;  // kept so that a save state can list it again
     std::vector<std::filesystem::directory_entry> entries;
     std::size_t index{};
 };
@@ -208,6 +221,17 @@ std::string disc_directory_name(const std::filesystem::path &path) {
         if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
     }
     return name;
+}
+
+// A directory's entries, in the order the game sees them (also used to list one again when loading a save state).
+DirectoryHandle list_directory(const std::filesystem::path &native) {
+    DirectoryHandle handle;
+    handle.path = native;
+    for (const auto &entry : std::filesystem::directory_iterator(native)) handle.entries.push_back(entry);
+    std::sort(handle.entries.begin(), handle.entries.end(), [](const auto &a, const auto &b) {
+        return disc_directory_name(a.path()) < disc_directory_name(b.path());
+    });
+    return handle;
 }
 
 struct RawSectorFile {
@@ -227,9 +251,16 @@ struct VirtualDiscHandle {
     std::uint64_t position{};
 };
 
+// Where an open stream came from, so that a save state can reopen it.
+struct OpenFileInfo {
+    std::filesystem::path path;
+    int mode{};
+};
+
 struct FileTable {
     std::int32_t next_fd{3};
     std::unordered_map<std::int32_t, std::fstream> files;
+    std::unordered_map<std::int32_t, OpenFileInfo> open_info;
     std::unordered_map<std::int32_t, DirectoryHandle> directories;
     std::unordered_map<std::int32_t, RawSectorFile> raw_sector_files;
     std::uint32_t next_virtual_sector{32u};
@@ -277,8 +308,29 @@ const VirtualDiscFile *register_virtual_disc_file(const std::filesystem::path &p
     return &inserted->second;
 }
 
+// Streaming reads the same few files over and over, up to ~17 reads in a frame, and opening a file costs more than
+// the read itself. Keep them open: the disc files never change while the game runs. LCS_IO_HANDLE_CACHE=0: reopen.
+std::ifstream &open_virtual_file(const std::filesystem::path &path, std::ifstream &scratch) {
+    static const bool cached = [] {
+        const char *text = std::getenv("LCS_IO_HANDLE_CACHE");
+        return text == nullptr || *text != '0';
+    }();
+    if (!cached) {
+        scratch.open(path, std::ios::binary);
+        return scratch;
+    }
+    static std::unordered_map<std::string, std::ifstream> files;
+    const auto [found, inserted] = files.try_emplace(path.string());
+    if (inserted) found->second.open(path, std::ios::binary);
+    found->second.clear();
+    return found->second;
+}
+
 std::size_t read_virtual_disc(VirtualDiscHandle &handle, std::span<std::uint8_t> output) {
     if (handle.position >= handle.length || output.empty()) return 0u;
+    const perf::Scope perf_scope(perf::kIoUs);
+    perf::add(perf::kIoReads);
+    perf::add(perf::kIoKb, output.size() / 1024u);
     const std::uint64_t available = handle.length - handle.position;
     const std::size_t requested =
         static_cast<std::size_t>(std::min<std::uint64_t>(available, output.size()));
@@ -310,7 +362,8 @@ std::size_t read_virtual_disc(VirtualDiscHandle &handle, std::span<std::uint8_t>
             const std::uint64_t file_offset = absolute - file_start;
             const std::size_t chunk = static_cast<std::size_t>(
                 std::min<std::uint64_t>(requested - written, file->size - file_offset));
-            std::ifstream input(file->native_path, std::ios::binary);
+            std::ifstream scratch;
+            std::ifstream &input = open_virtual_file(file->native_path, scratch);
             if (!input) break;
             input.seekg(static_cast<std::streamoff>(file_offset), std::ios::beg);
             input.read(reinterpret_cast<char *>(output.data() + written),
@@ -844,6 +897,7 @@ std::uint32_t save_savedata_file(psprecomp::Runtime &runtime, std::uint32_t para
             !write_savedata_auxiliary(runtime, parameter_address, kSavedataSnd0Offset, "SND0.AT3")) {
             return 0x80110385u;
         }
+        save_slots_note_saved(runtime, parameter_address, path.parent_path());
     }
     return 0u;
 }
@@ -973,9 +1027,13 @@ std::uint32_t execute_savedata_operation(psprecomp::Runtime &runtime, std::uint3
     case 3u: // SAVE
     case 5u: // LISTSAVE
         return save_savedata_file(runtime, parameter_address, data_path, false);
+    case 7u: // LISTALLDELETE, once the player has picked the save
     case 9u: // AUTODELETE
     case 10u: // DELETE
-        if (!std::filesystem::exists(directory)) return 0x80110347u;
+        // Without both names this would be the folder of every save. Only ever delete one save.
+        if (read_fixed_string(runtime.memory(), parameter_address + kSavedataGameNameOffset, 13u).empty() ||
+            read_fixed_string(runtime.memory(), parameter_address + kSavedataSaveNameOffset, 20u).empty()) return 0x80110347u;
+        if (!std::filesystem::is_regular_file(directory / "DATA.BIN")) return 0x80110347u;
         return std::filesystem::remove_all(directory) != 0u ? 0u : 0x80110345u;
     case 11u: // LIST
         return list_savedata_directories(runtime, parameter_address);
@@ -1019,7 +1077,11 @@ struct DisplayState {
 };
 DisplayState display_state;
 std::uint64_t display_vblank_index{};
-constexpr std::uint64_t kVblankPeriodUs = 16683u;
+// The game's clock follows measured time, so its step adapts to this. Above 60 (Timing.FrameRate) the VBlank comes sooner.
+std::uint64_t vblank_period_us() noexcept {
+    const std::uint32_t fps = lcs_render_configuration().timing.frame_rate;
+    return fps <= 60u ? 16683u : 1000000u / fps;
+}
 
 struct GeCallbackRecord {
     std::uint32_t signal_function{};
@@ -1502,7 +1564,7 @@ bool dispatch_vblank_interrupt(psprecomp::Runtime &rt, psprecomp::AllegrexContex
     current->second.suspended_context = handler;
     current->second.delay_until_us = virtual_time_us + delay_us;
     current->second.delay_sequence = thread_table.next_delay_sequence++;
-    g_vblank_interrupt_due_us = virtual_time_us + delay_us + kVblankPeriodUs;
+    g_vblank_interrupt_due_us = virtual_time_us + delay_us + vblank_period_us();
     if (!activate_next_thread(ctx, "vblank-interrupt"))
         rt.stop("PSP scheduler deadlock while waiting for the VBlank interrupt");
     return true;
@@ -1627,14 +1689,17 @@ std::uint32_t throttle_vblank_to_real_time() {
     if (uncapped) return 0u;
     constexpr std::uint32_t kMaxSkippedVblanks = 6u;
     static std::chrono::steady_clock::time_point next_vblank{};
-    const auto period = std::chrono::microseconds(kVblankPeriodUs);
+    const auto period = std::chrono::microseconds(vblank_period_us());
     const auto now = std::chrono::steady_clock::now();
     if (next_vblank == std::chrono::steady_clock::time_point{}) {
         next_vblank = now + period;
         return 0u;
     }
     if (now < next_vblank) {
-        precise_sleep_until(next_vblank);
+        {
+            const perf::Scope perf_scope(perf::kThrottleUs);
+            precise_sleep_until(next_vblank);
+        }
         next_vblank += period;
         return 0u;
     }
@@ -1665,6 +1730,7 @@ bool ge_async_enabled() {
 }
 
 void ge_worker_main() {
+    set_host_thread_name(L"GeWorker");
     for (;;) {
         std::function<void()> task;
         {
@@ -1705,6 +1771,7 @@ void ge_worker_wait_idle() {
     std::unique_lock lock(ge_worker.mutex);
     if (!ge_worker.started) return;
     if (ge_worker.tasks.empty() && !ge_worker.busy) return;
+    const perf::Scope perf_scope(perf::kIdleWaitUs);
     ge_worker.cv.wait(lock, [] { return ge_worker.tasks.empty() && !ge_worker.busy; });
 }
 
@@ -1767,6 +1834,7 @@ bool g_ge_list_since_finish = false;
 std::uint32_t g_ge_last_list_address = 0u;
 
 void execute_ge_list_frame(psprecomp::Runtime &rt, std::uint32_t list_address, std::uint64_t vblank) {
+    const perf::Scope perf_scope(perf::kGeListUs);
     if (g_ge_list_since_finish && list_address != g_ge_last_list_address) {
         // Not the image the window keeps.
         ge_finish_shows_this_frame() = false;
@@ -1798,7 +1866,13 @@ void present_frame(psprecomp::Runtime &rt, const PresentRequest &request) {
     }
     ge_gpu_backend_set_display_framebuffer(present_buffer, present_width, present_height);
     fps_overlay_render_frame(present_buffer, present_width, present_height);
-    const bool gpu_frame_ready = ge_gpu_backend_finish_color_frame(request.vblank);
+    perf::add(perf::kVblanks);
+    bool gpu_frame_ready = false;
+    {
+        const perf::Scope perf_scope(perf::kFinishFrameUs);
+        gpu_frame_ready = ge_gpu_backend_finish_color_frame(request.vblank);
+    }
+    if (gpu_frame_ready) perf::frame();
     g_ge_list_since_finish = false;
     static std::uint64_t vblanks_since_gpu_frame = 0u;
     static bool holding_gpu_frame = false;
@@ -1861,7 +1935,10 @@ void check_wall_clock_limit(psprecomp::Runtime &runtime, std::uint64_t sample_ma
     runtime.stop("Wall-clock limit reached at " + psprecomp::hex32(runtime.cpu().pc));
 }
 
+#include "lcs_profile_state.inc"
+
 void lcs_starvation_tick(psprecomp::Runtime &starvation_runtime, psprecomp::AllegrexContext &ctx) {
+    state_poll(starvation_runtime, ctx);
     virtual_time_us += starvation_tick_microseconds;
     promote_expired_delays();
 
@@ -1877,6 +1954,66 @@ void lcs_starvation_tick(psprecomp::Runtime &starvation_runtime, psprecomp::Alle
     (void)activate_next_thread(ctx, "timer-preempt");
 }
 
+}
+
+void lcs_state_request_save(int slot) noexcept { g_state_request.store(slot + 1); }
+void lcs_state_request_load(int slot) noexcept { g_state_request.store(-(slot + 1)); }
+
+namespace {
+constexpr int kStateSlots = 5;
+std::atomic<int> g_state_slot{0};
+
+bool state_hotkey_allowed() noexcept {
+    if (host_settings_open() || pause_menu_visible()) {
+        host_toast("CLOSE THE MENU");
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+int lcs_state_latest_slot() noexcept {
+    int best = -1;
+    std::filesystem::file_time_type best_time{};
+    for (int slot = 0; slot < kStateSlots; ++slot) {
+        std::error_code ec;
+        const auto time = std::filesystem::last_write_time(state_file(slot), ec);
+        if (ec) continue;
+        if (best < 0 || time > best_time) {
+            best = slot;
+            best_time = time;
+        }
+    }
+    if (best >= 0) g_state_slot.store(best);
+    return best;
+}
+
+void lcs_state_hotkey_save() noexcept {
+    if (frontend_menu_active()) {
+        host_toast("NOT IN THE MENU");
+        return;
+    }
+    if (state_hotkey_allowed()) lcs_state_request_save(g_state_slot.load());
+}
+
+void lcs_state_hotkey_next_slot() noexcept {
+    const int slot = (g_state_slot.load() + 1) % kStateSlots;
+    g_state_slot.store(slot);
+    char text[40];
+    std::snprintf(text, sizeof text, "SLOT %d%s", slot + 1, std::filesystem::exists(state_file(slot)) ? " USED" : "");
+    host_toast(text);
+}
+
+void lcs_state_hotkey_load() noexcept {
+    if (!state_hotkey_allowed()) return;
+    const int slot = g_state_slot.load();
+    if (!std::filesystem::exists(state_file(slot))) {
+        char text[40];
+        std::snprintf(text, sizeof text, "NO STATE SLOT %d", slot + 1);
+        host_toast(text);
+        return;
+    }
+    lcs_state_request_load(slot);
 }
 
 void set_wall_clock_limit(double seconds) {
@@ -2886,6 +3023,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                             if (stream) {
                                 const auto fd = file_table.next_fd++;
                                 file_table.files.emplace(fd, std::move(stream));
+                                file_table.open_info[fd] = OpenFileInfo{disc_file->native_path, static_cast<int>(std::ios::binary | std::ios::in)};
                                 file_table.raw_sector_files.emplace(
                                     fd, RawSectorFile{0ull, disc_file->size});
                                 ctx.set_gpr(2, static_cast<std::uint32_t>(fd));
@@ -2914,6 +3052,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
             const auto fd = file_table.next_fd++;
             file_table.files.emplace(fd, std::move(stream));
+            file_table.open_info[fd] = OpenFileInfo{native, static_cast<int>(mode)};
             ctx.set_gpr(2, static_cast<std::uint32_t>(fd));
         });
 
@@ -2921,6 +3060,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
             const auto fd = static_cast<std::int32_t>(ctx.gpr[4]);
             file_table.raw_sector_files.erase(fd);
+            file_table.open_info.erase(fd);
             if (file_table.virtual_disc_handles.erase(fd) == 1u) {
                 ctx.set_gpr(2, 0u);
                 return;
@@ -2977,8 +3117,13 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 return;
             }
             it->second.clear();
-            it->second.read(reinterpret_cast<char *>(guest_destination), static_cast<std::streamsize>(size));
+            {
+                const perf::Scope perf_scope(perf::kIoUs);
+                it->second.read(reinterpret_cast<char *>(guest_destination), static_cast<std::streamsize>(size));
+            }
             const auto read = static_cast<std::uint32_t>(it->second.gcount());
+            perf::add(perf::kIoReads);
+            perf::add(perf::kIoKb, read / 1024u);
             ctx.set_gpr(2, read);
         });
 
@@ -3075,7 +3220,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             const auto native = rt.translate_path(path);
             const bool directory = std::filesystem::is_directory(native, error);
             const bool regular = std::filesystem::is_regular_file(native, error);
-            if (!directory && !regular) {
+            if ((!directory && !regular) || (frontend_hide_saves() && path.find("SAVEDATA") != std::string::npos)) {
                 ctx.set_gpr(2, 0x80010002u);
                 return;
             }
@@ -3110,16 +3255,13 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     runtime.register_hle("IoFileMgrForUser", 0xB29DDF9Cu,
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             try {
-                const auto native = rt.translate_path(rt.memory().read_c_string(ctx.gpr[4]));
-                if (!std::filesystem::is_directory(native)) {
+                const std::string guest_path = rt.memory().read_c_string(ctx.gpr[4]);
+                const auto native = rt.translate_path(guest_path);
+                if (!std::filesystem::is_directory(native) || (frontend_hide_saves() && guest_path.find("SAVEDATA") != std::string::npos)) {
                     ctx.set_gpr(2, 0x80010002u);
                     return;
                 }
-                DirectoryHandle handle;
-                for (const auto &entry : std::filesystem::directory_iterator(native)) handle.entries.push_back(entry);
-                std::sort(handle.entries.begin(), handle.entries.end(), [](const auto &a, const auto &b) {
-                    return disc_directory_name(a.path()) < disc_directory_name(b.path());
-                });
+                DirectoryHandle handle = list_directory(native);
                 const auto fd = file_table.next_fd++;
                 file_table.directories.emplace(fd, std::move(handle));
                 ctx.set_gpr(2, static_cast<std::uint32_t>(fd));
@@ -3201,13 +3343,26 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
             const HostInputState host = stress_test_enabled()
                 ? stress_test_input(rt, {}) : display_window_input();
-            const std::uint32_t buttons = host.buttons;
+            std::uint8_t analog_x = host.analog_x;
+            std::uint8_t analog_y = host.analog_y;
+            std::uint32_t buttons = frontend_boot_pad(trainer_pad_buttons(host.buttons, analog_x, analog_y));
+            buttons = pause_menu_game_tick(rt, buttons);
+            buttons = radio_wheel_game_tick(rt, buttons);
+            // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.
+            static bool slots_held = false;
+            if (save_slots_open()) slots_held = true;
+            else if (buttons == 0u) slots_held = false;
+            if (slots_held || frontend_options_blocks_game()) {
+                buttons = 0u;
+                analog_x = 128u;
+                analog_y = 128u;
+            }
             for (std::uint32_t index = 0u; index < count; ++index) {
                 const std::uint32_t sample = destination + index * sample_size;
                 rt.memory().store32(sample, static_cast<std::uint32_t>(system_time_microseconds()));
                 rt.memory().store32(sample + 4u, buttons);
-                rt.memory().store8(sample + 8u, host.analog_x);
-                rt.memory().store8(sample + 9u, host.analog_y);
+                rt.memory().store8(sample + 8u, analog_x);
+                rt.memory().store8(sample + 9u, analog_y);
                 rt.memory().store8(sample + 10u, 128u);
                 rt.memory().store8(sample + 11u, 128u);
                 rt.memory().zero(sample + 12u, 4u);
@@ -3251,8 +3406,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         });
     runtime.register_hle("sceDisplay", 0x4D4E10ECu,
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
-            const std::uint64_t blank = kVblankPeriodUs / 5u;
-            const std::uint64_t phase = virtual_time_us % kVblankPeriodUs;
+            const std::uint64_t blank = vblank_period_us() / 5u;
+            const std::uint64_t phase = virtual_time_us % vblank_period_us();
             ctx.set_gpr(2, phase < blank ? 1u : 0u);
         });
     runtime.register_hle("sceDisplay", 0x9C6EAAD7u,
@@ -3281,6 +3436,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 present_frame(rt, request);
                 ge_worker.pending_presents.fetch_sub(1u);
             });
+        } else {
+            perf::add(perf::kSkippedPresents);
         }
 
         display_window_pump();
@@ -3291,11 +3448,12 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         }
         audio_output_advance(virtual_time_us);
         if (const std::uint32_t skipped = throttle_vblank_to_real_time(); skipped != 0u) {
-            virtual_time_us += static_cast<std::uint64_t>(skipped) * kVblankPeriodUs;
+            perf::add(perf::kSkippedVblanks, skipped);
+            virtual_time_us += static_cast<std::uint64_t>(skipped) * vblank_period_us();
             display_vblank_index += skipped;
         }
         const std::uint32_t vblank_delay = static_cast<std::uint32_t>(
-            (virtual_time_us / kVblankPeriodUs + 1u) * kVblankPeriodUs - virtual_time_us);
+            (virtual_time_us / vblank_period_us() + 1u) * vblank_period_us() - virtual_time_us);
         if (deliver_pending_ge_callback(ctx, vblank_delay, true)) return;
         if (dispatch_vblank_interrupt(rt, ctx, vblank_delay)) return;
         (void)delay_current_thread(rt, ctx, vblank_delay);
@@ -3460,11 +3618,19 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
             if (savedata_utility.status == UtilityStatus::Init) {
                 savedata_utility.status = UtilityStatus::Visible;
+            } else if (savedata_utility.status == UtilityStatus::Visible && !savedata_utility.operation_complete &&
+                       frontend_menu_tick(rt, savedata_utility.parameter_address)) {
+                // The game waits here, still running, as it would for a slow memory stick.
             } else if (savedata_utility.status == UtilityStatus::Visible && !savedata_utility.operation_complete) {
-                const std::uint32_t result = execute_savedata_operation(rt, savedata_utility.parameter_address);
-                rt.memory().store32(savedata_utility.parameter_address + kUtilityCommonResultOffset, result);
-                savedata_utility.operation_complete = true;
-                savedata_utility.status = UtilityStatus::Quit;
+                ge_worker_wait_idle();  // the list draws its own frames
+                const SlotOutcome slots = save_slots_utility(rt, savedata_utility.parameter_address);
+                if (slots != SlotOutcome::Waiting) {
+                    // The game reads 1 as the player cancelling, which isn't an error to it.
+                    const std::uint32_t result = slots == SlotOutcome::Cancelled ? 1u : execute_savedata_operation(rt, savedata_utility.parameter_address);
+                    rt.memory().store32(savedata_utility.parameter_address + kUtilityCommonResultOffset, result);
+                    savedata_utility.operation_complete = true;
+                    savedata_utility.status = UtilityStatus::Quit;
+                }
             }
             set_success(ctx);
         });

@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "lcs_controls.hpp"
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
@@ -8447,22 +8449,43 @@ L_089474DC:
     if (rt.invoke_chained_direct<&recomp_unit_0057_entry, 57u, 491u, 0x088EABACu>(ctx, &aot_mem) && ctx.pc == 0x089474E4u) goto L_089474E4;
     return;
 L_089474E4:
-    // Face the camera while firing a gun standing still.
+    // Free aim: with a gun, while the aim button (the pad's R, at +14; right mouse) is held. The player faces where the
+    // camera looks and the game takes its aim-in-place control (0x08943A74); sideways and backward walking go through the
+    // game's own strafe (generated unit 0081). Firing without aiming is the game's own.
     if (!lcs::lcs_auto_aim()) {
         const std::uint32_t weapon_type = aot_mem.aot_load32(
             ctx.gpr[16] + 1428u + static_cast<std::uint32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + 1720u))) * 28u);
         const bool gun = lcs::lcs_free_aim_weapon(weapon_type);
         bool aiming = false;
         if (gun && ctx.gpr[18] != 0u) {
-            AllegrexContext fire = ctx;
-            fire.gpr[4] = ctx.gpr[18];
-            fire.gpr[31] = 0u;
-            const float speed_x = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[16] + 112u));
-            const float speed_y = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[16] + 116u));
-            const bool standing = speed_x * speed_x + speed_y * speed_y < 0.0004f;
-            aiming = standing && rt.invoke_isolated_aot(0x08A98040u, fire) && fire.gpr[2] != 0u;
+            aiming = aot_mem.aot_load16(ctx.gpr[18] + 14u) != 0u;
         }
         lcs::lcs_set_free_aim(aiming);
+        // OFF BY DEFAULT (LCS_FREEAIM_MOVE_FIRE=1 turns it on): the camera dives while strafing and firing at once.
+        // Firing plays the game's firing animation over the walk, and with no legs in it the player stops. While free-aiming
+        // and firing, move from the stick (relative to the camera) at the speed of the strafe walk, through the ped's
+        // velocity, so that the physics step still stops it at walls. The firing pose stays: the legs slide.
+        if (aiming && ctx.gpr[18] != 0u && aot_mem.aot_load32(ctx.gpr[16] + 844u) == 16u && [] { static const bool on = std::getenv("LCS_FREEAIM_MOVE_FIRE") != nullptr; return on; }()) {  // off until the camera dive is fixed
+            const auto sx = static_cast<float>(static_cast<std::int16_t>(aot_mem.aot_load16(ctx.gpr[18] + 0u))) / 127.0f;
+            const auto sy = static_cast<float>(static_cast<std::int16_t>(aot_mem.aot_load16(ctx.gpr[18] + 2u))) / 127.0f;
+            const float push = std::min(1.0f, std::hypot(sx, sy));
+            if (push > 0.12f) {
+                const std::uint32_t cam = 0x08B832A0u + 400u + aot_mem.aot_load8(0x08B832A0u + 127u) * 656u;
+                float fx = std::bit_cast<float>(aot_mem.aot_load32(cam + 416u)), fy = std::bit_cast<float>(aot_mem.aot_load32(cam + 420u));
+                const float flat = std::hypot(fx, fy);
+                if (flat > 1e-4f) {
+                    fx /= flat;
+                    fy /= flat;
+                    const float wx = fx * (-sy) + fy * sx, wy = fy * (-sy) - fx * sx;  // forward is the stick's -y; right is (fy, -fx)
+                    const float len = std::hypot(wx, wy);
+                    if (len > 1e-4f) {
+                        const float speed = (sy < -0.5f * len ? 0.085f : 0.072f) * push;  // measured against the walk animation's own displacement
+                        aot_mem.aot_store32(ctx.gpr[16] + 112u, std::bit_cast<std::uint32_t>(wx / len * speed));
+                        aot_mem.aot_store32(ctx.gpr[16] + 116u, std::bit_cast<std::uint32_t>(wy / len * speed));
+                    }
+                }
+            }
+        }
         if (aiming) {
             const std::uint32_t camera = 0x08B832A0u + 400u + aot_mem.aot_load8(0x08B832A0u + 127u) * 656u;
             const float forward_x = std::bit_cast<float>(aot_mem.aot_load32(camera + 416u));
@@ -8471,7 +8494,7 @@ L_089474E4:
             aot_mem.aot_store32(ctx.gpr[16] + 1248u, heading);
             aot_mem.aot_store32(ctx.gpr[16] + 1252u, heading);
         }
-        ctx.gpr[2] = aiming ? 1u : 0u;
+        if (aiming) ctx.gpr[2] = 1u;  // not aiming: the game's own choice
     }
     { const bool branch_taken = ctx.gpr[2] == 0u;
     // nop

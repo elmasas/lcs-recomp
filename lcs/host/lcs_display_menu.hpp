@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace lcs {
 
@@ -23,6 +24,8 @@ struct HostSettingsView {
 [[nodiscard]] bool host_settings_open() noexcept;
 bool host_settings_handle(HostSettingsKey key) noexcept;
 void host_settings_note_fullscreen(bool enabled) noexcept;
+// Updates one value in LCSNative.ini, keeping the rest of the file. Any thread.
+void host_settings_write(const std::string &section, const std::string &key, const std::string &value);
 [[nodiscard]] HostSettingsView host_settings_view() noexcept;
 
 // Win32 message and virtual-key values, named here so the window procedure
@@ -67,6 +70,10 @@ void rasterize_settings_overlay(const HostSettingsView &view, std::uint8_t *rgba
                                 std::uint32_t width, std::uint32_t height) noexcept;
 
 void host_fps_note_presented_frame() noexcept;
+
+// A short message in the corner of the picture (save states use it): shown for about three seconds.
+void host_toast(const char *text) noexcept;
+[[nodiscard]] bool host_toast_active() noexcept;
 void host_fps_format(char *label, std::size_t size) noexcept;
 void rasterize_fps_overlay(std::uint8_t *rgba, std::uint32_t width,
                            std::uint32_t height) noexcept;

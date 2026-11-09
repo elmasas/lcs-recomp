@@ -3225,7 +3225,7 @@ L_088513C8:
     if (!lcs::lcs_auto_aim()) {
         ctx.gpr[2] = 1u;
         aot_mem.aot_store32(0x08B832A0u + 384u, std::bit_cast<std::uint32_t>(0.5f));
-        aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.4f));
+        aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.5f));
     }
     { const bool branch_taken = ctx.gpr[2] == 0u;
     // nop

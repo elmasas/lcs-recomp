@@ -1,4 +1,11 @@
 #include "lcs_stress_test.hpp"
+#include "lcs_perf_log.hpp"
+
+#include <array>
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
 #include "lcs_controls.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_render_config.hpp"
@@ -39,6 +46,76 @@ std::atomic<bool> shot_request{};
 unsigned directed_shots{};
 
 double elapsed() { return std::chrono::duration<double>(Clock::now() - start).count(); }
+
+// Stutter rig, the idea of VCS Recomp's tools/cruise.py: LCS_CRUISE_ROUTE=<file of "x y z" lines> moves the player along
+// the route at LCS_CRUISE_SPEED m/s (default 40, 144 km/h), so streaming and the renderer get the same load every run.
+// Test mode only. It is a low flight, not a drive: nothing here depends on traffic or on a car being nearby.
+struct Cruise {
+    std::vector<std::array<float, 3>> points;
+    std::vector<double> lengths;  // cumulative, closing the loop
+    double speed{40.0};
+    double started{-1.0};
+};
+Cruise cruise;
+
+void load_cruise() {
+    const char *path = std::getenv("LCS_CRUISE_ROUTE");
+    if (path == nullptr || *path == '\0') return;
+    std::ifstream in(path);
+    std::array<float, 3> point{};
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream words(line);
+        if (words >> point[0] >> point[1] >> point[2]) cruise.points.push_back(point);
+    }
+    if (cruise.points.size() < 2u) {
+        std::cerr << "[cruise] route needs two points: " << path << "\n";
+        cruise.points.clear();
+        return;
+    }
+    if (const char *speed = std::getenv("LCS_CRUISE_SPEED")) cruise.speed = std::max(1.0, std::atof(speed));
+    double total = 0.0;
+    for (std::size_t i = 0u; i < cruise.points.size(); ++i) {
+        const auto &a = cruise.points[i];
+        const auto &b = cruise.points[(i + 1u) % cruise.points.size()];
+        total += std::hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+        cruise.lengths.push_back(total);
+    }
+    std::cerr << "[cruise] " << cruise.points.size() << " points, " << total << " units at " << cruise.speed << "/s\n";
+}
+
+// Returns the camera's turn toward the route, positive to the right.
+int apply_cruise(psprecomp::Runtime &runtime, const StressObservation &observation, double seconds) {
+    if (cruise.points.empty() || !observation.ready || observation.entity == 0u) return 0;
+    if (cruise.started < 0.0) cruise.started = seconds;
+    const double total = cruise.lengths.back();
+    const double along = std::fmod((seconds - cruise.started) * cruise.speed, total);
+    std::size_t leg = 0u;
+    while (leg + 1u < cruise.lengths.size() && along > cruise.lengths[leg]) ++leg;
+    const auto &a = cruise.points[leg];
+    const auto &b = cruise.points[(leg + 1u) % cruise.points.size()];
+    const double before = leg == 0u ? 0.0 : cruise.lengths[leg - 1u];
+    const double span = std::max(1e-3, cruise.lengths[leg] - before);
+    const double f = (along - before) / span;
+    auto &memory = runtime.memory();
+    for (unsigned axis = 0u; axis < 3u; ++axis) {
+        const float value = static_cast<float>(a[axis] + (b[axis] - a[axis]) * f);
+        memory.store32(observation.entity + 48u + axis * 4u, std::bit_cast<std::uint32_t>(value));
+    }
+    const double dx = b[0] - a[0], dy = b[1] - a[1];
+    const double length = std::max(1e-3, std::hypot(dx, dy));
+    const double cross = observation.camera[0] * (dy / length) - observation.camera[1] * (dx / length);
+    const double dot = observation.camera[0] * (dx / length) + observation.camera[1] * (dy / length);
+    const double turn = std::atan2(cross, dot);
+    // Once a second: 1 means the camera looks where the route goes, -1 the opposite way.
+    static double last_report = 0.0;
+    if (seconds - last_report >= 1.0) {
+        last_report = seconds;
+        std::cerr << "[cruise] t=" << seconds << " camera_dot=" << dot << "\n";
+    }
+    return static_cast<int>(std::clamp(turn * 40.0, -40.0, 40.0));
+}
 StressObservation observe(psprecomp::Runtime &runtime) {
     StressObservation result;
     result.menu = lcs_menu_active();
@@ -193,6 +270,7 @@ void stress_test_init(bool active, bool driving, const std::filesystem::path &di
     if (!telemetry) throw std::runtime_error("Cannot open stress movement log");
     telemetry << "seconds,ready,driving,entity,x,y,z,distance,recoveries,buttons,analog_x,analog_y,vehicle_model\n";
     start = Clock::now();
+    load_cruise();
     std::cerr << "[stress] enabled; ALL guest writes and savedata mutations blocked; output="
               << output.string() << "\n";
 }
@@ -208,7 +286,40 @@ HostInputState stress_test_input(psprecomp::Runtime &runtime, HostInputState phy
     if (!enabled) return physical;
     const double seconds = elapsed();
     const auto observation = observe(runtime);
+    perf::set_position(observation.position[0], observation.position[1]);
+    // LCS_TEST_TIMING=1: the game's millisecond clock against the real one, to check it stays real time at any frame rate.
+    static const bool test_timing = std::getenv("LCS_TEST_TIMING") != nullptr;
+    if (test_timing && observation.ready) {
+        static double last_timing = -1.0;
+        if (seconds - last_timing >= 10.0) {
+            last_timing = seconds;
+            std::cerr << "[timing] real=" << seconds << " game_ms=" << runtime.memory().load32(0x08B5E02Cu)
+                      << " clock=" << unsigned(runtime.memory().load8(0x08B5E090u)) << ':'
+                      << unsigned(runtime.memory().load8(0x08B5E091u)) << "\n";
+        }
+    }
+    // LCS_TEST_HOUR=<0-23>: hold the clock, so night-only rendering can be checked without playing to it.
+    static const int test_hour = [] {
+        const char *text = std::getenv("LCS_TEST_HOUR");
+        return text != nullptr && *text != '\0' ? std::atoi(text) : -1;
+    }();
+    if (test_hour >= 0) {
+        runtime.memory().store8(0x08B5E090u, static_cast<std::uint8_t>(test_hour));
+        runtime.memory().store8(0x08B5E091u, 0u);
+    }
+    if (perf::g_enabled) {
+        // US 1.05 CCoronas: 56 slots of 112 bytes, the owner's id at +16 (0: free).
+        constexpr std::uint32_t kCoronas = 0x08E53BC0u, kStride = 112u, kCount = 56u;
+        std::uint32_t active = 0u;
+        for (std::uint32_t i = 0u; i < kCount; ++i)
+            active += runtime.memory().load32(kCoronas + i * kStride + 16u) != 0u ? 1u : 0u;
+        perf::set_coronas(active);
+    }
     auto input = controller.sample(seconds, observation);
+    if (!cruise.points.empty() && observation.ready) {
+        input = HostInputState{};
+        input.camera_x = apply_cruise(runtime, observation, seconds);
+    }
     lcs_camera_set_axes(input.camera_x, input.camera_y);
     lcs_set_host_drive_inputs(input.accelerate, input.brake, input.throttle, input.brake_pressure);
     if (!direct_dir.empty()) {

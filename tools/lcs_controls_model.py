@@ -21,7 +21,7 @@ MAX_PER_BINDING = 4  # kMaxKeysPerAction
 ACTIONS = (
     "MoveForward", "MoveBack", "MoveLeft", "MoveRight", "Walk", "Sprint",
     "Jump", "EnterVehicle", "Attack", "Aim", "CenterCamera",
-    "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake",
+    "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake", "RadioWheel",
 )
 
 # English UI labels: action name, on foot, in vehicle.
@@ -44,6 +44,7 @@ ACTION_LABELS = {
     "Pause": ("Pause", "pause", "pause"),
     "Camera": ("Change camera", "camera", "camera"),
     "Handbrake": ("Handbrake", "—", "handbrake"),
+    "RadioWheel": ("Radio wheel", "—", "radio wheel: hold, point, release"),
 }
 
 # Pad ini keys (Xbox names) and display: Xbox, PlayStation, on-foot role.
@@ -106,6 +107,7 @@ DEFAULT_KEYS = {
     "Pause": ["Escape"],
     "Camera": ["V"],
     "Handbrake": ["Space"],
+    "RadioWheel": ["Tab"],
 }
 
 DEFAULT_PAD = {

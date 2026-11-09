@@ -1,11 +1,16 @@
+#include "lcs_texture_pack.hpp"
 #include "ge_gpu_backend.hpp"
 #include "ge_present_shader.hpp"
 #include "lcs_display_menu.hpp"
+#include "lcs_imgui_menu.hpp"
+#include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <iostream>
 #include <iterator>
 #include <span>
 #include <sstream>
@@ -249,7 +255,8 @@ struct Dx12Texture {
     std::uint64_t checksum{};
     std::uint64_t signature_epoch{};
     std::uint64_t last_used_epoch{};
-    std::vector<std::byte> rgba8;
+    // Shared, so that a texture pack's image is not copied for each texture that shows it.
+    std::shared_ptr<const std::vector<std::byte>> pixels;
 };
 
 struct Dx12FramebufferTarget {
@@ -331,6 +338,9 @@ struct Dx12GeState {
     ComPtr<ID3DBlob> pixel_shader;
     std::unordered_map<std::uint64_t, ComPtr<ID3D12PipelineState>> pipelines;
     std::unordered_map<std::uint64_t, Dx12Texture> textures;
+    // The textures least recently used when the cache was last scanned, oldest first.
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> eviction_queue;
+    std::size_t eviction_next{};
     std::uint64_t last_texture_lookup_key{};
     Dx12Texture *last_texture_lookup{};
     std::vector<std::uint64_t> pending_texture_keys;
@@ -340,6 +350,9 @@ struct Dx12GeState {
     std::unordered_set<std::uint32_t> known_frame_targets;
     std::uint32_t last_registered_framebuffer_target{0xFFFFFFFFu};
     std::uint64_t texture_cache_bytes{};
+    std::uint64_t video_budget_bytes{};    // the adapter's local memory budget, 0 if unknown
+    std::uint64_t cache_full_epoch{~0ull};  // a frame in which nothing more could be evicted
+    bool cache_over_logged{};
     std::uint64_t frame_epoch{1u};
 
     ComPtr<IDXGISwapChain3> swapchain;
@@ -408,6 +421,7 @@ std::uint64_t texture_key(const GeGpuDrawDescriptor &draw) noexcept {
     key = hash_mix(key, draw.texture_selected_level);
     key = hash_mix(key, static_cast<std::uint64_t>(draw.texture_clamp_u));
     key = hash_mix(key, static_cast<std::uint64_t>(draw.texture_clamp_v));
+    key = hash_mix(key, lcs::texture_pack_generation());
     return key;
 }
 
@@ -633,6 +647,7 @@ void resolve_target_for_sampling(Dx12GeState &s, Dx12FramebufferTarget &target,
 
 bool wait_for_fence(Dx12GeState &s, UINT64 value, std::string &error) noexcept {
     if (value == 0u || !s.fence || s.fence->GetCompletedValue() >= value) return true;
+    const perf::Scope perf_scope(perf::kFenceWaitUs);
     HRESULT hr = s.fence->SetEventOnCompletion(value, s.fence_event);
     if (FAILED(hr)) {
         error = hr_text(hr, "ID3D12Fence::SetEventOnCompletion(GE frame)");
@@ -662,6 +677,7 @@ bool wait_for_gpu(Dx12GeState &s, std::string &error) noexcept {
         return false;
     }
     if (s.fence->GetCompletedValue() >= value) return true;
+    const perf::Scope perf_scope(perf::kFenceWaitUs);
     hr = s.fence->SetEventOnCompletion(value, s.fence_event);
     if (FAILED(hr)) {
         error = hr_text(hr, "ID3D12Fence::SetEventOnCompletion(GE)");
@@ -1586,6 +1602,8 @@ ID3D12PipelineState *pipeline_for(Dx12GeState &s, const GeGpuDrawDescriptor &dra
         (accept_counter_clockwise ? (std::uint64_t{1} << 61u) : 0u);
     const auto found = s.pipelines.find(key);
     if (found != s.pipelines.end()) return found->second.Get();
+    const perf::Scope perf_scope(perf::kPsoUs);
+    perf::add(perf::kPsoNew);
     ComPtr<ID3D12PipelineState> pipeline = create_pipeline(
         s, draw, packed_0115, cull_enabled, accept_counter_clockwise, error);
     if (!pipeline) return nullptr;
@@ -2078,6 +2096,96 @@ void composite_fps_overlay(Dx12GeState &s) noexcept {
     s.list->DrawInstanced(6u, 1u, 0u, 0u);
 }
 
+// LCS_TEST_SHOT_DIR=<dir>: every 5 s (or LCS_TEST_SHOT_EVERY_MS), a PPM of what the window shows.
+struct TestShot {
+    ComPtr<ID3D12Resource> buffer;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT width{};
+    UINT height{};
+    bool pending{};
+    unsigned count{};
+};
+TestShot g_test_shot;
+
+const char *test_shot_directory() noexcept {
+    static const char *directory = std::getenv("LCS_TEST_SHOT_DIR");
+    return directory;
+}
+
+bool test_shot_due() noexcept {
+    if (test_shot_directory() == nullptr || g_test_shot.pending) return false;
+    static auto next = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next) return false;
+    // LCS_TEST_SHOT_EVERY_MS=<ms> takes them more often, for catching a moment such as a bullet's tracer.
+    static const char *const every = std::getenv("LCS_TEST_SHOT_EVERY_MS");
+    next = now + (every != nullptr ? std::chrono::milliseconds(std::max(50, std::atoi(every))) : std::chrono::milliseconds(5000));
+    return true;
+}
+
+void record_test_shot(Dx12GeState &s, ID3D12Resource *backbuffer) noexcept {
+    const D3D12_RESOURCE_DESC desc = backbuffer->GetDesc();
+    UINT64 bytes = 0u;
+    UINT rows = 0u;
+    UINT64 row_size = 0u;
+    s.device->GetCopyableFootprints(&desc, 0u, 1u, 0u, &g_test_shot.footprint, &rows, &row_size, &bytes);
+    if (!g_test_shot.buffer || g_test_shot.buffer->GetDesc().Width < bytes) {
+        g_test_shot.buffer.Reset();
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC buffer{};
+        buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buffer.Width = bytes;
+        buffer.Height = 1u;
+        buffer.DepthOrArraySize = 1u;
+        buffer.MipLevels = 1u;
+        buffer.Format = DXGI_FORMAT_UNKNOWN;
+        buffer.SampleDesc.Count = 1u;
+        buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(s.device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer,
+                                                     D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                     IID_PPV_ARGS(&g_test_shot.buffer))))
+            return;
+    }
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = g_test_shot.buffer.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = g_test_shot.footprint;
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = backbuffer;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0u;
+    s.list->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+    g_test_shot.width = static_cast<UINT>(desc.Width);
+    g_test_shot.height = desc.Height;
+    g_test_shot.pending = true;
+}
+
+void write_test_shot() noexcept {
+    g_test_shot.pending = false;
+    void *mapped = nullptr;
+    if (FAILED(g_test_shot.buffer->Map(0u, nullptr, &mapped))) return;
+    char path[1024];
+    std::snprintf(path, sizeof(path), "%s/shot-%03u.ppm", test_shot_directory(), g_test_shot.count++);
+    if (std::FILE *file = std::fopen(path, "wb")) {
+        std::fprintf(file, "P6\n%u %u\n255\n", g_test_shot.width, g_test_shot.height);
+        std::vector<std::uint8_t> row(static_cast<std::size_t>(g_test_shot.width) * 3u);
+        const auto *base = static_cast<const std::uint8_t *>(mapped);
+        for (UINT y = 0u; y < g_test_shot.height; ++y) {
+            const std::uint8_t *in = base + static_cast<std::size_t>(y) * g_test_shot.footprint.Footprint.RowPitch;
+            for (UINT x = 0u; x < g_test_shot.width; ++x) {
+                row[x * 3u + 0u] = in[x * 4u + 0u];
+                row[x * 3u + 1u] = in[x * 4u + 1u];
+                row[x * 3u + 2u] = in[x * 4u + 2u];
+            }
+            std::fwrite(row.data(), 1u, row.size(), file);
+        }
+        std::fclose(file);
+    }
+    const D3D12_RANGE none{0u, 0u};
+    g_test_shot.buffer->Unmap(0u, &none);
+}
+
 bool record_direct_present(Dx12GeState &s, Dx12FramebufferTarget &source,
                            const Dx12FramePresentDecision &decision, std::string &error) noexcept {
     if (!ensure_swapchain(s, error)) return false;
@@ -2115,7 +2223,15 @@ bool record_direct_present(Dx12GeState &s, Dx12FramebufferTarget &source,
     s.list->DrawInstanced(3u, 1u, 0u, 0u);
     host_fps_note_presented_frame();
     if (decision.composite_fps) composite_fps_overlay(s);
-    if (decision.composite_settings) composite_settings_overlay(s, decision.settings);
+    (void)decision.settings;
+    imgui_menu_record(s.device.Get(), s.queue.Get(), s.list.Get(), s.native_window, kColorFormat, kFrameCount);
+    if (test_shot_due()) {
+        // LCS_TEST_SHOT_DIR: the back buffer as shown, menu included, for unattended checks.
+        transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        record_test_shot(s, backbuffer);
+        transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
+        return true;
+    }
     transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET,
                D3D12_RESOURCE_STATE_PRESENT);
     return true;
@@ -2138,6 +2254,29 @@ Dx12Texture *find_cached_texture(Dx12GeState &s, std::uint64_t key) noexcept {
 void clear_texture_lookup_cache(Dx12GeState &s) noexcept {
     s.last_texture_lookup = nullptr;
     s.last_texture_lookup_key = 0u;
+}
+
+// Scanning the whole cache for each texture to drop made a big upload very slow, with one scan per texture dropped.
+// One scan now finds the next 1024, and a texture used since then is passed over.
+std::unordered_map<std::uint64_t, Dx12Texture>::iterator next_eviction_victim(Dx12GeState &s) {
+    constexpr std::size_t kBatch = 1024u;
+    for (bool scanned = false;; scanned = true) {
+        while (s.eviction_next < s.eviction_queue.size()) {
+            const auto [epoch, key] = s.eviction_queue[s.eviction_next++];
+            const auto found = s.textures.find(key);
+            if (found != s.textures.end() && found->second.last_used_epoch == epoch && epoch != s.frame_epoch)
+                return found;
+        }
+        if (scanned) return s.textures.end();
+        s.eviction_queue.clear();
+        s.eviction_next = 0u;
+        for (const auto &[key, texture] : s.textures) {
+            if (texture.last_used_epoch != s.frame_epoch) s.eviction_queue.emplace_back(texture.last_used_epoch, key);
+        }
+        const std::size_t keep = std::min(kBatch, s.eviction_queue.size());
+        std::partial_sort(s.eviction_queue.begin(), s.eviction_queue.begin() + static_cast<std::ptrdiff_t>(keep), s.eviction_queue.end());
+        s.eviction_queue.resize(keep);
+    }
 }
 
 HRESULT create_texture_image(Dx12GeState &s, const D3D12_RESOURCE_DESC &desc,
@@ -2174,7 +2313,8 @@ HRESULT create_texture_image(Dx12GeState &s, const D3D12_RESOURCE_DESC &desc,
 
 bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
                             std::uint32_t base_width, std::uint32_t base_height,
-                            std::uint32_t mip_levels, std::vector<std::byte> packed) noexcept {
+                            std::uint32_t mip_levels, std::shared_ptr<const std::vector<std::byte>> pixels,
+                            std::uint64_t known_checksum = 0u) noexcept {
     if (!s.enabled || !draw.texture_enabled || base_width == 0u || base_height == 0u ||
         mip_levels == 0u || mip_levels > 8u) return false;
     std::size_t expected = 0u;
@@ -2186,38 +2326,59 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
         w = std::max(1u, w >> 1u);
         h = std::max(1u, h >> 1u);
     }
-    if (packed.size() != expected) return false;
+    if (!pixels || pixels->size() != expected) return false;
+    const std::vector<std::byte> &packed = *pixels;
     const std::uint64_t key = texture_key(draw);
-    const std::uint64_t checksum = hash_bytes(packed);
+    std::uint64_t checksum = known_checksum;
+    if (checksum == 0u) {
+        const perf::Scope perf_scope(perf::kTexHashUs);
+        checksum = hash_bytes(packed);
+    }
     if (auto found = s.textures.find(key); found != s.textures.end()) {
         found->second.signature_epoch = s.frame_epoch;
         if (found->second.checksum == checksum) {
             found->second.descriptor = draw;
+            perf::add(perf::kTexSame);
             return true;
         }
+        perf::add(perf::kTexReplaced);
         for (Dx12FrameResources &retire : s.frames) {
             retire.transient_resources.push_back(found->second.image);
             if (found->second.placement)
                 retire.transient_placements.push_back(found->second.placement);
         }
         retire_texture_srv(s, found->second.srv_index);
-        s.texture_cache_bytes -= std::min<std::uint64_t>(s.texture_cache_bytes, found->second.rgba8.size());
+        s.texture_cache_bytes -= std::min<std::uint64_t>(s.texture_cache_bytes, found->second.pixels->size());
         clear_texture_lookup_cache(s);
         s.textures.erase(found);
     }
     const std::uint32_t entry_limit = lcs_render_configuration().rendering.texture_cache_entries;
-    const std::uint64_t byte_limit = static_cast<std::uint64_t>(lcs_render_configuration().rendering.texture_cache_mb) * 1024ull * 1024ull;
-    while (s.textures.size() >= entry_limit || s.texture_cache_bytes + packed.size() > byte_limit) {
-        auto victim = s.textures.end();
-        for (auto it = s.textures.begin(); it != s.textures.end(); ++it) {
-            if (it->second.last_used_epoch == s.frame_epoch) continue;
-            if (victim == s.textures.end() ||
-                it->second.last_used_epoch < victim->second.last_used_epoch)
-                victim = it;
-        }
+    // Room for the texture packs' images on top of the setting, within what the graphics card has.
+    std::uint64_t byte_limit = static_cast<std::uint64_t>(lcs_render_configuration().rendering.texture_cache_mb) * 1024ull * 1024ull +
+                               lcs::texture_pack_decoded_bytes();
+    if (s.video_budget_bytes != 0u)
+        byte_limit = std::max<std::uint64_t>(std::min<std::uint64_t>(byte_limit, s.video_budget_bytes / 4u * 3u), 64ull << 20u);
+    static bool limit_logged = false;
+    if (!limit_logged && lcs::texture_pack_decoded_bytes() != 0u) {
+        limit_logged = true;
+        std::cerr << "[texture-cache] limit " << (byte_limit >> 20u) << " MB (graphics card budget "
+                  << (s.video_budget_bytes >> 20u) << " MB)" << std::endl;
+    }
+    while (s.cache_full_epoch != s.frame_epoch &&
+           (s.textures.size() >= entry_limit || s.texture_cache_bytes + packed.size() > byte_limit)) {
+        auto victim = next_eviction_victim(s);
         if (victim == s.textures.end()) {
-            return false;
+            // Everything in the cache is in use this frame. Refusing would only make the next draw decode and try
+            // again, hundreds of times a frame: go over for now, and evict once those textures are no longer in use.
+            s.cache_full_epoch = s.frame_epoch;
+            if (!s.cache_over_logged) {
+                s.cache_over_logged = true;
+                std::cerr << "[texture-cache] a frame needed more than " << (byte_limit >> 20u)
+                          << " MB of textures; going over (Rendering.TextureCacheMB)" << std::endl;
+            }
+            break;
         }
+        perf::add(perf::kTexEvicted);
         for (Dx12FrameResources &retire : s.frames) {
             retire.transient_resources.push_back(victim->second.image);
             if (victim->second.placement)
@@ -2225,7 +2386,7 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
         }
         retire_texture_srv(s, victim->second.srv_index);
         s.texture_cache_bytes -= std::min<std::uint64_t>(
-            s.texture_cache_bytes, victim->second.rgba8.size());
+            s.texture_cache_bytes, victim->second.pixels->size());
         clear_texture_lookup_cache(s);
         s.textures.erase(victim);
     }
@@ -2247,9 +2408,11 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
     texture.checksum = checksum;
     texture.signature_epoch = s.frame_epoch;
     texture.last_used_epoch = s.frame_epoch;
-    texture.rgba8 = std::move(packed);
+    texture.pixels = std::move(pixels);
     HRESULT hr = create_texture_image(s, desc, texture);
     if (FAILED(hr)) return false;
+    perf::add(perf::kTexNew);
+    perf::add(perf::kTexKb, texture.pixels->size() / 1024u);
 
     texture.srv_index = allocate_texture_srv(s);
     if (texture.srv_index == 0u) return false;
@@ -2260,7 +2423,7 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
     srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srv.Texture2D.MipLevels = mip_levels;
     s.device->CreateShaderResourceView(texture.image.Get(), &srv, srv_cpu(s, texture.srv_index));
-    s.texture_cache_bytes += texture.rgba8.size();
+    s.texture_cache_bytes += texture.pixels->size();
     s.pending_texture_keys.push_back(key);
     s.textures.emplace(key, std::move(texture));
     return true;
@@ -2276,7 +2439,7 @@ void record_pending_texture_uploads(Dx12GeState &s, Dx12FrameResources &frame) n
         auto found = s.textures.find(key);
         if (found == s.textures.end()) continue;
         Dx12Texture &texture = found->second;
-        if (!texture.image || texture.rgba8.empty()) continue;
+        if (!texture.image || !texture.pixels || texture.pixels->empty()) continue;
 
         const D3D12_RESOURCE_DESC desc = texture.image->GetDesc();
         std::array<D3D12_PLACED_SUBRESOURCE_FOOTPRINT, 8> footprints{};
@@ -2340,7 +2503,7 @@ void record_pending_texture_uploads(Dx12GeState &s, Dx12FrameResources &frame) n
             for (std::uint32_t y = 0u; y < h; ++y) {
                 std::memcpy(mapped_base + footprints[level].Offset +
                                 static_cast<std::size_t>(y) * footprints[level].Footprint.RowPitch,
-                            texture.rgba8.data() + source_offset +
+                            texture.pixels->data() + source_offset +
                                 static_cast<std::size_t>(y) * row_bytes,
                             row_bytes);
             }
@@ -2498,6 +2661,13 @@ bool create_backend(Dx12GeState &s, std::string &error) noexcept {
     if (!select_adapter(s, error)) return false;
     hr = D3D12CreateDevice(s.adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&s.device));
     if (FAILED(hr)) { error = hr_text(hr, "D3D12CreateDevice(DX12 GE)"); return false; }
+    {
+        ComPtr<IDXGIAdapter3> adapter3;
+        DXGI_QUERY_VIDEO_MEMORY_INFO memory{};
+        if (SUCCEEDED(s.adapter.As(&adapter3)) &&
+            SUCCEEDED(adapter3->QueryVideoMemoryInfo(0u, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memory)))
+            s.video_budget_bytes = memory.Budget;
+    }
     select_depth_and_msaa(s);
     D3D12_COMMAND_QUEUE_DESC queue_desc{};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -2863,7 +3033,7 @@ bool ge_gpu_backend_upload_decoded_texture(const GeGpuDrawDescriptor &draw, std:
                                            std::uint32_t height,
                                            std::span<const std::byte> rgba) noexcept {
     if (rgba.empty()) return false;
-    std::vector<std::byte> packed(rgba.begin(), rgba.end());
+    auto packed = std::make_shared<const std::vector<std::byte>>(rgba.begin(), rgba.end());
     return prepare_texture_upload(state(), draw, width, height, 1u, std::move(packed));
 }
 
@@ -2887,14 +3057,24 @@ bool ge_gpu_backend_upload_decoded_texture_chain(const GeGpuDrawDescriptor &draw
         for (const auto &level : levels) packed.insert(packed.end(), level.rgba8.begin(), level.rgba8.end());
     } catch (...) { return false; }
     return prepare_texture_upload(state(), draw, levels.front().width, levels.front().height,
-                                  static_cast<std::uint32_t>(levels.size()), std::move(packed));
+                                  static_cast<std::uint32_t>(levels.size()),
+                                  std::make_shared<const std::vector<std::byte>>(std::move(packed)));
 }
 
 bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescriptor &draw,
                                                         std::uint32_t width, std::uint32_t height,
                                                         std::uint32_t mip_levels,
                                                         std::vector<std::byte> packed) noexcept {
-    return prepare_texture_upload(state(), draw, width, height, mip_levels, std::move(packed));
+    return prepare_texture_upload(state(), draw, width, height, mip_levels,
+                                  std::make_shared<const std::vector<std::byte>>(std::move(packed)));
+}
+
+bool ge_gpu_backend_upload_shared_texture(const GeGpuDrawDescriptor &draw, std::uint32_t width, std::uint32_t height,
+                                          std::shared_ptr<const std::vector<std::byte>> rgba8) noexcept {
+    if (!rgba8) return false;
+    // An image that never changes: its address stands for its contents.
+    const std::uint64_t checksum = hash_mix(reinterpret_cast<std::uintptr_t>(rgba8.get()), rgba8->size()) | 1u;
+    return prepare_texture_upload(state(), draw, width, height, 1u, std::move(rgba8), checksum);
 }
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte> destination) noexcept {
     const Dx12GeState &s = state();
@@ -3503,8 +3683,11 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
     bool presented = false;
     if (recorded_present && s.swapchain) {
         const bool vsync = lcs_render_configuration().display.vsync;
-        hr = s.swapchain->Present(vsync ? 1u : 0u,
-                                  !vsync && s.swapchain_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0u);
+        {
+            const perf::Scope perf_scope(perf::kDxgiPresentUs);
+            hr = s.swapchain->Present(vsync ? 1u : 0u,
+                                      !vsync && s.swapchain_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0u);
+        }
         if (SUCCEEDED(hr)) {
             presented = true;
             s.direct_present_ok = true;
@@ -3522,6 +3705,8 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
         clear_accumulation(s);
         return false;
     }
+
+    if (g_test_shot.pending && wait_for_fence(s, frame.fence_value, error)) write_test_shot();
 
     if (readback_now) {
         if (wait_for_fence(s, frame.fence_value, error)) {
@@ -3545,6 +3730,40 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
     s.frame_cursor = (s.frame_cursor + 1u) % kFrameCount;
     ++s.frame_epoch;
     return presented || readback_now;
+}
+
+bool ge_gpu_backend_supports_host_frame() noexcept { return state().enabled; }
+
+bool ge_gpu_backend_present_host_frame() noexcept {
+    Dx12GeState &s = state();
+    if (!s.enabled || s.native_window == nullptr) return false;
+    std::string error;
+    if (!ensure_swapchain(s, error)) return false;
+    Dx12FrameResources &frame = s.frames[s.frame_cursor];
+    if (!wait_for_fence(s, frame.fence_value, error)) return false;
+    frame.transient_resources.clear();
+    frame.transient_placements.clear();
+    if (FAILED(frame.allocator->Reset()) || FAILED(s.list->Reset(frame.allocator.Get(), nullptr))) return false;
+    const UINT index = s.swapchain->GetCurrentBackBufferIndex();
+    ID3D12Resource *backbuffer = s.backbuffers[index].Get();
+    transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = swap_rtv(s, index);
+    s.list->OMSetRenderTargets(1u, &rtv, FALSE, nullptr);
+    constexpr float black[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    s.list->ClearRenderTargetView(rtv, black, 0u, nullptr);
+    imgui_menu_record(s.device.Get(), s.queue.Get(), s.list.Get(), s.native_window, kColorFormat, kFrameCount);
+    if (test_shot_due()) record_test_shot(s, backbuffer);
+    transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    if (FAILED(s.list->Close())) return false;
+    ID3D12CommandList *lists[]{s.list.Get()};
+    s.queue->ExecuteCommandLists(1u, lists);
+    const bool vsync = lcs_render_configuration().display.vsync;
+    const HRESULT presented = s.swapchain->Present(vsync ? 1u : 0u, !vsync && s.swapchain_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0u);
+    frame.fence_value = s.next_fence++;
+    if (FAILED(s.queue->Signal(s.fence.Get(), frame.fence_value))) return false;
+    if (g_test_shot.pending && wait_for_fence(s, frame.fence_value, error)) write_test_shot();
+    s.frame_cursor = (s.frame_cursor + 1u) % kFrameCount;
+    return SUCCEEDED(presented);
 }
 
 bool ge_gpu_backend_copy_game_frame_rgba(std::span<std::byte> destination) noexcept {
@@ -3614,6 +3833,7 @@ bool ge_gpu_backend_texture_available(const GeGpuDrawDescriptor &) noexcept { re
 bool ge_gpu_backend_upload_decoded_texture(const GeGpuDrawDescriptor &, std::uint32_t, std::uint32_t, std::span<const std::byte>) noexcept { return false; }
 bool ge_gpu_backend_upload_decoded_texture_chain(const GeGpuDrawDescriptor &, std::span<const GeGpuDecodedMipLevel>) noexcept { return false; }
 bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescriptor &, std::uint32_t, std::uint32_t, std::uint32_t, std::vector<std::byte>) noexcept { return false; }
+bool ge_gpu_backend_upload_shared_texture(const GeGpuDrawDescriptor &, std::uint32_t, std::uint32_t, std::shared_ptr<const std::vector<std::byte>>) noexcept { return false; }
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte>) noexcept { return false; }
 void ge_gpu_backend_accumulate_color_triangles(const GeGpuDrawDescriptor &, std::span<const GeGpuVertex>) noexcept {}
 void ge_gpu_backend_accumulate_hardware_triangles(const GeGpuDrawDescriptor &, const GeGpuHardwareTransform &, std::span<const GeGpuVertex>, std::span<const std::uint32_t>) noexcept {}
@@ -3622,6 +3842,8 @@ void ge_gpu_backend_set_native_window(void *) noexcept {}
 void ge_gpu_backend_set_display_framebuffer(std::uint32_t address, std::uint32_t, std::uint32_t) noexcept { state().display_framebuffer = address & 0x001FFFF0u; }
 void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &height) noexcept { width = 480u; height = 272u; }
 bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept { return false; }
+bool ge_gpu_backend_supports_host_frame() noexcept { return false; }
+bool ge_gpu_backend_present_host_frame() noexcept { return false; }
 bool ge_gpu_backend_copy_game_frame_rgba(std::span<std::byte>) noexcept { return false; }
 bool ge_gpu_backend_presents_directly() noexcept { return false; }
 std::uint32_t ge_gpu_backend_owned_framebuffer() noexcept { return 0u; }

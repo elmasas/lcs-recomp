@@ -1,3 +1,4 @@
+#include "lcs_texture_pack.hpp"
 #include "psprecomp/common.hpp"
 #include "psprecomp/elf32.hpp"
 #include "psprecomp/runtime.hpp"
@@ -6,7 +7,10 @@
 #include "lcs_audio_output.hpp"
 #include "ge_gpu_backend.hpp"
 #include "ge_renderer.hpp"
+#include "lcs_perf_log.hpp"
 #include "lcs_stress_test.hpp"
+#include "vcs/crash.h"
+#include "vcs/profiler.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_region.hpp"
 
@@ -47,6 +51,7 @@ int main(int argc, char **argv) {
         } else if (arg == "--game" && i + 1 < argc) {
             game_root = argv[++i];
             elf_path = game_root / "EBOOT.ELF";
+            lcs::texture_pack_set_root(game_root.string());
         } else if (arg == "--elf" && i + 1 < argc) {
             elf_path = argv[++i];
         } else if ((arg == "--max-dispatches" || arg == "--dispatch-cap") && i + 1 < argc) {
@@ -65,6 +70,8 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (const char *crash = std::getenv("LCS_CRASH_HANDLER"); crash == nullptr || *crash != '0')
+        vcs::installCrashHandlers();
     if (stress && !max_seconds_supplied) max_seconds = 600.0;
     if (stress && (!std::isfinite(max_seconds) || max_seconds <= 0.0)) {
         std::cerr << "Stress test requires a positive finite --max-seconds\n";
@@ -76,6 +83,7 @@ int main(int argc, char **argv) {
             argc > 0 ? std::filesystem::absolute(argv[0], executable_error).parent_path()
                      : std::filesystem::current_path();
         lcs::initialize_lcs_render_configuration(executable_directory);
+        lcs::perf::init();
 
         auto elf = psprecomp::Elf32Image::from_file(elf_path);
 
@@ -138,8 +146,10 @@ int main(int argc, char **argv) {
 
         const std::uint32_t entry = elf.runtime_entry(psprecomp::kDefaultPspUserLoadBase);
         std::cout << "Running from entry " << psprecomp::hex32(entry) << "\n" << std::flush;
+        vcs::startProfiler(runtime);
         runtime.run(entry, max_dispatches);
         lcs::ge_worker_shutdown();
+        lcs::perf::shutdown();
 
         if (runtime.stopped()) {
             std::cout << "Runtime stopped: " << runtime.stop_reason() << "\n";

@@ -78,6 +78,7 @@ enum class BindAction : std::uint8_t {
     Pause,
     Camera,
     Handbrake,
+    RadioWheel,
     Count,
 };
 
@@ -159,6 +160,7 @@ inline const char *bind_action_name(BindAction action) noexcept {
     case BindAction::Pause: return "Pause";
     case BindAction::Camera: return "Camera";
     case BindAction::Handbrake: return "Handbrake";
+    case BindAction::RadioWheel: return "RadioWheel";
     case BindAction::Count: return "";
     }
     return "";
@@ -210,6 +212,7 @@ inline ControlBindings default_control_bindings() {
     add(BindAction::Pause, {HostKey::Escape});
     add(BindAction::Camera, {HostKey::V});
     add(BindAction::Handbrake, {HostKey::Space});
+    add(BindAction::RadioWheel, {HostKey::Tab});
     const auto add_pad = [&](PadButton button, std::initializer_list<BindAction> actions) {
         auto &count = bindings.pad_count[static_cast<std::size_t>(button)];
         for (const BindAction action : actions) {
@@ -232,6 +235,7 @@ inline ControlBindings default_control_bindings() {
     add_pad(PadButton::DpadLeft, {BindAction::WeaponPrevious});
     add_pad(PadButton::DpadRight, {BindAction::WeaponNext});
     add_pad(PadButton::LeftClick, {BindAction::Down});
+    add_pad(PadButton::RightClick, {BindAction::RadioWheel});
     return bindings;
 }
 
@@ -268,6 +272,53 @@ KeyboardSample sample_keyboard(const ControlBindings &bindings, bool driving, Is
     }
     return sample;
 }
+
+// The game's own menus, whatever the bindings say: WASD or the arrows move, Enter accepts, Escape or Backspace goes back. The menu
+// has its own keys so that it can't be left unusable by a rebinding, and they don't reach it as their gameplay actions.
+// A key held while a menu opens or closes does nothing until it's released: Escape opens the pause menu, and would
+// otherwise go on to close it. Outside gameplay but with no menu open, as on the screen the game waits on at startup
+// and in cutscenes, Enter still accepts.
+class MenuKeyFilter {
+public:
+    template <class IsDown>
+    KeyboardSample sample(const ControlBindings &bindings, bool driving, bool menu, bool gameplay, IsDown &&is_down) {
+        const bool outside = menu || !gameplay;
+        if (menu != was_menu_ || outside != was_outside_) {
+            for (const HostKey key : kKeys) latched_[static_cast<std::size_t>(key)] = is_down(key);
+            was_menu_ = menu;
+            was_outside_ = outside;
+        }
+        for (const HostKey key : kKeys) {
+            if (!is_down(key)) latched_[static_cast<std::size_t>(key)] = false;
+        }
+        const auto usable = [&](HostKey key) { return is_down(key) && !latched_[static_cast<std::size_t>(key)]; };
+        KeyboardSample sample = sample_keyboard(bindings, driving, [&](HostKey key) {
+            if (!is_filtered(key)) return is_down(key);
+            if (menu || (outside && key == HostKey::Enter)) return false;
+            return usable(key);
+        });
+        if (outside && usable(HostKey::Enter)) sample.buttons |= kPspCross;
+        if (menu) {
+            if (usable(HostKey::W) || usable(HostKey::Up)) sample.buttons |= kPspUp;
+            if (usable(HostKey::S) || usable(HostKey::Down)) sample.buttons |= kPspDown;
+            if (usable(HostKey::A) || usable(HostKey::Left)) sample.buttons |= kPspLeft;
+            if (usable(HostKey::D) || usable(HostKey::Right)) sample.buttons |= kPspRight;
+            if (usable(HostKey::Escape) || usable(HostKey::Backspace)) sample.buttons |= kPspCircle;
+        }
+        return sample;
+    }
+
+private:
+    static constexpr std::array<HostKey, 12> kKeys = {HostKey::W, HostKey::A, HostKey::S, HostKey::D, HostKey::Up,
+                                                      HostKey::Down, HostKey::Left, HostKey::Right, HostKey::Enter,
+                                                      HostKey::Escape, HostKey::Backspace, HostKey::MouseLeft};
+    static bool is_filtered(HostKey key) noexcept {
+        return std::find(kKeys.begin(), kKeys.end(), key) != kKeys.end();
+    }
+    std::array<bool, 256> latched_{};
+    bool was_menu_{false};
+    bool was_outside_{false};
+};
 
 inline std::uint32_t binding_wheel_buttons(const ControlBindings &bindings, bool up,
                                            bool driving) noexcept {
@@ -332,6 +383,7 @@ inline bool lookup_bind_action(std::string_view name, BindAction &action) noexce
         {"select", BindAction::Camera},
         {"changecamera", BindAction::Camera},
         {"handbrake", BindAction::Handbrake},
+        {"radiowheel", BindAction::RadioWheel},
     };
     for (const Alias &alias : kAliases) {
         if (name == alias.name) {

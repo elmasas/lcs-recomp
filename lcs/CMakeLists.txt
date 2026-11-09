@@ -1,28 +1,46 @@
 set(FFMPEG_LIBS avcodec avformat avutil swresample swscale)
 set(FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg)
 
-file(GLOB HOST_SOURCES CONFIGURE_DEPENDS host/*.cpp)
+file(GLOB HOST_SOURCES CONFIGURE_DEPENDS host/*.cpp host/vcs/*.cpp)
 list(REMOVE_ITEM HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/host/pack_font5x7.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/host/main.cpp)
 # Share the real HLE implementations with the save-protection integration test.
+if(WIN32)
+    set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+    list(APPEND HOST_SOURCES
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbrz/xbrz.cpp)
+else()
+    # The settings menu is DX12 only: other builds keep the simple overlay in lcs_display_menu.cpp.
+    list(REMOVE_ITEM HOST_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/host/vcs/settings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/host/vcs/settings_menu.cpp)
+endif()
 add_library(lcs_host OBJECT ${HOST_SOURCES})
 add_executable(LCSNative host/main.cpp)
 target_link_libraries(LCSNative PRIVATE lcs_host)
 target_include_directories(lcs_host PUBLIC host)
 if(WIN32)
-    target_include_directories(lcs_host PRIVATE ${FFMPEG_DIR}/include)
+    target_include_directories(lcs_host PRIVATE ${FFMPEG_DIR}/include ${IMGUI_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xbrz)
 endif()
 target_link_libraries(lcs_host PUBLIC psprecomp_core)
 
 if(MSVC)
     target_compile_options(lcs_host PUBLIC /W4 /permissive- /EHsc)
     target_link_options(LCSNative PRIVATE /STACK:67108864)
+    # For the sampling profiler and the crash handler: host code gets line info, generated code its public symbols.
+    option(LCS_DEBUG_SYMBOLS "Link LCSNative with a PDB" OFF)
+    if(LCS_DEBUG_SYMBOLS)
+        target_compile_options(lcs_host PRIVATE /Z7)
+        target_link_options(LCSNative PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+    endif()
 endif()
 
 if(WIN32)
     target_sources(LCSNative PRIVATE resources/LCSNative.rc)
-    target_link_libraries(lcs_host PUBLIC gdi32 user32 winmm d3d12 dxgi d3dcompiler dxguid)
+    target_link_libraries(lcs_host PUBLIC gdi32 user32 winmm d3d12 dxgi d3dcompiler dxguid dbghelp)
     foreach(lib ${FFMPEG_LIBS})
         target_link_libraries(lcs_host PUBLIC ${FFMPEG_DIR}/lib/${lib}.lib)
     endforeach()
@@ -148,6 +166,9 @@ if(PSPRECOMP_BUILD_TESTS)
         host/lcs_stress_controller.cpp)
     target_include_directories(lcs_stress_controller_test PRIVATE host ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME lcs_stress_controller_test COMMAND lcs_stress_controller_test)
+    add_executable(lcs_state_io_test ${CMAKE_SOURCE_DIR}/tests/lcs_state_io_test.cpp)
+    target_include_directories(lcs_state_io_test PRIVATE host)
+    add_test(NAME lcs_state_io_test COMMAND lcs_state_io_test)
     add_executable(lcs_stress_safety_test ${CMAKE_SOURCE_DIR}/tests/lcs_stress_safety_test.cpp)
     target_link_libraries(lcs_stress_safety_test PRIVATE lcs_host)
     add_test(NAME lcs_stress_safety_test COMMAND lcs_stress_safety_test)

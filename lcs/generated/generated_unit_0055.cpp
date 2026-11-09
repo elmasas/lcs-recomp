@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_trainer.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -7971,6 +7972,7 @@ L_088E2FBC:
     ctx.gpr[7] = (ctx.gpr[18] | 0u);
     ctx.gpr[31] = (0x088E2FD4u);
     ctx.gpr[8] = (0u | 0u);
+    if (lcs::trainer_keep_on_bike()) goto L_088E2FD4;
     if (rt.invoke_chained_direct<&recomp_unit_0143_entry, 143u, 95u, 0x08A408F0u>(ctx, &aot_mem) && ctx.pc == 0x088E2FD4u) goto L_088E2FD4;
     return;
 L_088E2FD4:

@@ -5,6 +5,7 @@
 #include "lcs_render_config.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -12,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iterator>
+#include <mutex>
 #include <string>
 
 namespace lcs {
@@ -39,7 +42,8 @@ constexpr float kDistances[] = {1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 4.0f
 constexpr std::uint32_t kFrameRates[] = {30u, 60u};
 constexpr int kRowCount = 5;
 
-bool g_open = false;
+std::atomic<bool> g_open{false};  // the window thread toggles it, the render thread reads it
+std::mutex g_ini_mutex;
 int g_selected = 0;
 bool g_applied_ready = false;
 InternalResolutionMode g_applied_mode{InternalResolutionMode::Scale};
@@ -189,6 +193,7 @@ bool upsert_ini_line(std::string &file, const std::string &section, const std::s
 void save_settings() {
     const LcsConfiguration &config = lcs_render_configuration();
     if (config.source_path.empty()) return;
+    const std::lock_guard<std::mutex> guard(g_ini_mutex);
     std::ifstream input(config.source_path);
     if (!input) return;
     std::string file((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -236,7 +241,20 @@ void change_selected(int direction) noexcept {
 
 }  // namespace
 
-bool host_settings_open() noexcept { return g_open; }
+bool host_settings_open() noexcept { return g_open.load(); }
+
+void host_settings_write(const std::string &section, const std::string &key, const std::string &value) {
+    const LcsConfiguration &config = lcs_render_configuration();
+    if (config.source_path.empty()) return;
+    const std::lock_guard<std::mutex> guard(g_ini_mutex);
+    std::ifstream input(config.source_path);
+    if (!input) return;
+    std::string file((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    upsert_ini_line(file, section, key, value);
+    std::ofstream output(config.source_path, std::ios::trunc);
+    if (output) output << file;
+}
 
 void host_settings_note_fullscreen(bool enabled) noexcept {
     lcs_set_fullscreen_setting(enabled);
@@ -246,7 +264,7 @@ void host_settings_note_fullscreen(bool enabled) noexcept {
 bool host_settings_handle(HostSettingsKey key) noexcept {
     remember_applied_resolution();
     if (key == HostSettingsKey::Toggle) {
-        g_open = !g_open;
+        g_open.store(!g_open.load());
         return true;
     }
     if (!g_open) return false;
@@ -277,11 +295,35 @@ Win32HostKeyDecision classify_win32_host_key(std::uint32_t message, std::uint32_
     return decision;
 }
 
+namespace {
+std::mutex g_toast_mutex;
+char g_toast_text[40]{};
+std::chrono::steady_clock::time_point g_toast_until{};
+
+bool toast_copy(char *out, std::size_t size) noexcept {
+    std::lock_guard lock(g_toast_mutex);
+    if (std::chrono::steady_clock::now() >= g_toast_until || g_toast_text[0] == '\0') return false;
+    std::snprintf(out, size, "%s", g_toast_text);
+    return true;
+}
+}  // namespace
+
+void host_toast(const char *text) noexcept {
+    std::lock_guard lock(g_toast_mutex);
+    std::snprintf(g_toast_text, sizeof g_toast_text, "%s", text != nullptr ? text : "");
+    g_toast_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+}
+
+bool host_toast_active() noexcept {
+    std::lock_guard lock(g_toast_mutex);
+    return std::chrono::steady_clock::now() < g_toast_until && g_toast_text[0] != '\0';
+}
+
 Dx12FramePresentDecision decide_dx12_frame_present(bool direct_presentation_possible) noexcept {
     Dx12FramePresentDecision decision{};
     decision.composite_settings = host_settings_open();
     if (decision.composite_settings) decision.settings = host_settings_view();
-    decision.composite_fps = lcs_render_configuration().display.show_fps;
+    decision.composite_fps = lcs_render_configuration().display.show_fps || host_toast_active();
     decision.present_directly = direct_presentation_possible;
     decision.map_full_frame_readback = !direct_presentation_possible;
     return decision;
@@ -389,6 +431,11 @@ void rasterize_fps_overlay(std::uint8_t *rgba, std::uint32_t width,
     std::memset(rgba, 0, static_cast<std::size_t>(width) * height * 4u);
     overlay_fill(rgba, width, height, 0, 0, static_cast<int>(width), static_cast<int>(height),
                  8u, 12u, 28u, 210u);
+    char toast[40];
+    if (toast_copy(toast, sizeof(toast))) {
+        overlay_text(rgba, width, height, 8, 16, 2, toast, 255u, 236u, 160u);
+        return;
+    }
     char label[24];
     host_fps_format(label, sizeof(label));
     overlay_text(rgba, width, height, 8, 12, 3, label, 232u, 248u, 255u);

@@ -10,11 +10,13 @@ Place your decrypted `EBOOT.ELF` and the disc's `PSP_GAME` folder in `game/` for
 
 ## Build
 
-Requires Visual Studio 2022 and LLVM (clang-cl).
+Requires Visual Studio 2022 or its Build Tools, with clang-cl from LLVM or from Visual Studio's "C++ Clang tools" component.
 
 ```text
 lcs\BUILD_LCS.bat
 ```
+
+`lcs\scripts\build_perf.bat` makes the optimised build (ThinLTO and AVX2) in `out\lcs-perf`, and `lcs\scripts\play_perf.bat` runs it.
 
 ## Play
 
@@ -22,7 +24,7 @@ lcs\BUILD_LCS.bat
 lcs\PLAY_LCS.bat
 ```
 
-Settings are in `lcs/config/LCSNative.ini`.
+Settings are in `lcs/config/LCSNative.ini`. To keep your own apart from the defaults, copy it to `lcs/game/LCSNative.ini`: `play.bat` uses that one when it exists, and git ignores that folder.
 
 `Display.ResolutionMode` is the window (`PSP`, `Scale`, `Custom`, or
 `Desktop`). `Rendering.InternalResolutionMode` is the GE render
@@ -30,7 +32,68 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## Main menu
+
+On Windows the game opens on a main menu: Continue, Load Game, Load State (see Save states), New Game, Options and Quit Game. Continue loads your newest save. Everything it shows and plays comes from your own game files at runtime, and nothing from the game is included here. To go straight to the game instead, turn off F10, Display, Show the main menu.
+
+**Music** is the game's opening theme. F10, Display, Music also has the finale, the ending, or off. It follows the master volume.
+
+**Paintings** are chosen at random from the game's loading screens, sharpened with xBRZ, or from your texture pack if it has them. F10, Display, Painting picks a fixed one.
+
+To use your own images, put PNG files in `lcs/game/MENUART/`, or `game/MENUART/` in a release. Random then uses only those, among the ones that suit your window's shape, and the file name is how an image appears in the list. The [high-resolution LCS artworks](https://gtaforums.com/topic/992240-lcs-high-resolution-gta-lcs-artworks/) on GTAForums look very good here.
+
+## Saves
+
+The game has 8 save slots. Walk onto the save disc at a safehouse to choose one. The game's own Load and Delete, in the pause menu's Game page, use the same list. Saves are in `lcs/game/PSP/SAVEDATA/`, in the game's own format, with a `SLOTINFO.TXT` beside each one for the list to show. On Linux the list isn't drawn yet, and the game uses a single slot.
+
+## Save states
+
+Like an emulator's save states, and apart from the game's own saves: F5 saves the whole game at once, F6 picks the next of 5 slots, F7 loads the chosen slot. A short message shows in the corner. States are files in `lcs/game/STATES/`, or `game/STATES/` in a release, and each is about 30 MB because it holds the game's memory, so share none and publish none. The main menu has a Load State item, shown when a state exists, that loads the newest one: if the game crashes, start it and choose that. A state works across restarts, but not across a new version of the game that changes what a state holds (it says so instead of loading). Saving isn't possible during a movie, in the main menu or while a menu is open. The game's own saving is untouched, and still the safer record of your progress.
+
+## Radio wheel and GPS
+
+**Radio wheel:** in a vehicle, hold Tab, or press the right stick's button, then point at a station with the mouse or the right stick and let go. A short press tunes to the next station. Logos come from your texture pack when it has them. Otherwise each station's name shows until you've tuned to it once, and the game's own logo is kept from then on. The idea comes from VoidRadioWheel for San Andreas; none of its code or art is used.
+
+**GPS:** in a vehicle, a line on the radar follows the roads to your marker or the mission's objective. It doesn't know one-way streets or which bridges the story has opened yet. Turn it off or change its width under Game, in F10 or Options. The idea comes from [GPS Redux](https://github.com/juicermv/GTA-GPS-Redux) for San Andreas; none of its code is used.
+
+## In-game menu
+
+## Pause menu
+
+Esc opens one row of pages: Map, Brief, Stats, Game, Audio, Settings and Quit. A/D or Q/E move along the row, Enter goes into a page, and Esc comes back out, then closes the menu. Map, Brief, Stats, Game and Audio are the game's own pages, so the map, loading and stats work as they always have. Settings is the same screen as Options on the main menu, and its Game page also opens the game's own display, controls and language pages. To get the game's original pause menu back, turn on Settings, Game, Use the classic pause menu.
+
+F10 opens the settings and the trainer on Windows. Settings are saved to `LCSNative.ini`. Nothing from the trainer is saved, except what a saved game itself keeps: every start goes back to the original game.
+
+| Page | What's there |
+| --- | --- |
+| Display, Graphics, Controls, Game | Window, resolution, view distance, frame rate, distant street lights, texture pack |
+| Player | God mode, ammo, wanted level, health and armor, character model, power jump |
+| Vehicles | Spawner, repair, colors, hover, N.O.S., rocket boost, drive on walls and water, traffic |
+| Tuning | Acceleration, top speed, brakes, grip and steering of the current vehicle, weapon damage |
+| Teleport, World, Camera | Locations, time, weather, gravity, game speed, free camera |
+| Missions, Spawn | The game's mission selector, targets, pickups, button cheats |
+
+Most of the trainer comes from [CheatDevice Remastered](https://github.com/Freakler/CheatDeviceRemastered) by Freakler. See [`lcs/VCS_IMPORT.md`](lcs/VCS_IMPORT.md).
+
+## Texture packs
+
+PPSSPP texture packs work, and none is included. Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then choose it under F10, Graphics, Texture pack. It applies at once.
+
+A pack made for another region may match only partly: a texture it doesn't match stays as it is. Hash types `xxh64`, `xxh32` and `quick` are supported.
+
+`Rendering.TextureCacheEntries` and `Rendering.TextureCacheMB` set the size of the texture cache. Packs with large images, or long sessions, can use more than the defaults of 8192 and 256; if you have the memory to spare, 16384 and 512 avoid reloading textures.
+
 ## Mouse and keyboard
+
+In the game's own menus, and on the title screen, these keys always work, whatever the bindings below say:
+
+| Key | In a menu |
+| --- | --- |
+| W, A, S, D or the arrow keys | Move |
+| Enter | Accept. Also skips the title movie and cutscenes. |
+| Escape or Backspace | Go back. Escape also closes the pause menu. |
+
+The rest of this section is about gameplay.
 
 Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A
 binding is one or more names separated by commas. `None` clears it.
@@ -129,7 +192,7 @@ That way you will get a pre-confugred build environment which also utilzes [ccac
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
+GPL-3.0, see [`LICENSE`](LICENSE), because this fork includes GPL-3.0 code: from VCS Recomp and CheatDevice Remastered ([`lcs/VCS_IMPORT.md`](lcs/VCS_IMPORT.md)) and xBRZ. The original project is MIT, see [`LICENSE.MIT`](LICENSE.MIT). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
 
 ## Unattended engine stress test
 

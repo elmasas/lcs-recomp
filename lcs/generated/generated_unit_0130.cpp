@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_trainer.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -5593,7 +5594,7 @@ L_08A0E988:
     ctx.gpr[4] = (2229u << 16u);
     ctx.gpr[4] = (aot_mem.aot_load8(ctx.gpr[4] + static_cast<std::uint32_t>(25316)));
     ctx.gpr[21] = (2230u << 16u);
-    ctx.gpr[5] = (15363u << 16u);
+    ctx.gpr[5] = (lcs::trainer_gravity_high() << 16u);
     ctx.gpr[5] = (ctx.gpr[5] | 4719u);
     { const bool branch_taken = ctx.gpr[4] == 0u;
     ctx.fpr[22] = std::bit_cast<float>(ctx.gpr[5]);

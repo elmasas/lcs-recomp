@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_render_config.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -1713,6 +1714,8 @@ L_089FC9AC:
     ctx.pc = jump_target;
     return;
 L_089FC9E4:
+    // CCoronas::RegisterCorona. The draw distance comes from the game's data; scale it with the view distance.
+    ctx.fpr[13] = ctx.fpr[13] * lcs::corona_distance_scale();
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-48));
     ctx.gpr[2] = (2232u << 16u);
     ctx.gpr[14] = (ctx.gpr[2] + static_cast<std::uint32_t>(12960));

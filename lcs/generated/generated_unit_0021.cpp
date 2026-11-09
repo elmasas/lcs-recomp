@@ -149,7 +149,7 @@ static void crosshair_shot(Runtime &rt, AllegrexContext &ctx, GuestMemory::AotFa
 
     // Crosshair.
     aot_mem.aot_store32(0x08B832A0u + 384u, std::bit_cast<std::uint32_t>(0.5f));
-    aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.4f));
+    aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.5f));
 
     // Camera ray.
     const std::uint32_t ray = ctx.gpr[29] - 48u;
@@ -7849,7 +7849,7 @@ L_0885B59C:
     if (!lcs::lcs_auto_aim()) {
         ctx.gpr[2] = 1u;
         aot_mem.aot_store32(0x08B832A0u + 384u, std::bit_cast<std::uint32_t>(0.5f));
-        aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.4f));
+        aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.5f));
     }
     if (ctx.gpr[2] == 0u) {
     ctx.fpr[12] = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + static_cast<std::uint32_t>(192)));

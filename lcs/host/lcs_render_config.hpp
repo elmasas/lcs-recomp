@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <functional>
 #include <vector>
 
 namespace lcs {
@@ -52,6 +53,16 @@ struct DisplayConfiguration {
     bool show_fps{false};
     bool vsync{false};
     float hud_scale{1.0f};
+    bool hud_at_edges{false};
+    // Main menu: skip it, the file name of a painting (lcs_frontend_menu.cpp) or "random", and how to enlarge it.
+    bool skip_main_menu{false};
+    std::string menu_art{"random"};
+    std::string menu_art_quality{"auto"};
+    std::string menu_music{"intro"};
+    bool gps{true};
+    bool classic_pause{false};
+    bool radio_wheel_slow_motion{true};
+    std::uint32_t gps_width{2u};
     // Pictures shown by the game's button prompts: "original" or a folder name
     // under <config dir>/textures.
     std::string prompt_style{"original"};
@@ -79,7 +90,13 @@ struct DisplaySurfaceDimensions {
 [[nodiscard]] float rendering_texture_lod_bias() noexcept;
 
 [[nodiscard]] float view_distance_scale() noexcept;
+// View distance, for light coronas. LCS_CORONA_DISTANCE=0 keeps the original distances.
+[[nodiscard]] float corona_distance_scale() noexcept;
+// How far a street lamp's pool of light on the ground shows.
+[[nodiscard]] float lamp_pool_distance() noexcept;
 
+// Changes the running configuration under its lock.
+void lcs_update_configuration(const std::function<void(struct LcsConfiguration &)> &change);
 void lcs_set_view_distance(float value) noexcept;
 void lcs_set_fullscreen_setting(bool enabled) noexcept;
 void lcs_set_show_fps(bool enabled) noexcept;
@@ -106,6 +123,18 @@ struct RenderingConfiguration {
     float texture_lod_bias{0.0f};
     // LOD distance (TheCamera+224), far clip (RwCamera+132), fog plane (RwCamera+136).
     float view_distance{1.0f};
+    // A folder in <game>/TEXTURES (lcs_texture_pack.cpp). Empty: the game's own textures.
+    std::string texture_pack{};
+    // A second pack under the first: it fills in what the first doesn't replace.
+    std::string texture_pack2{};
+    // Distant street lights (lcs_lod_lights.cpp).
+    bool lod_lights{true};
+    float lod_lights_range{500.0f};
+    float lod_lights_radius{1.0f};
+    float lamp_pool_range{120.0f};
+    bool lamp_patches{true};
+    float lamp_patch_range{450.0f};
+    std::uint32_t lod_lights_limit{900u};
     std::uint32_t msaa{4u};
     std::uint32_t depth_precision{24u};
     std::uint32_t texture_cache_entries{8192u};

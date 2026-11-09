@@ -1,4 +1,5 @@
 #include "lcs_controls.hpp"
+#include "lcs_free_aim.hpp"
 #include "lcs_mouse.hpp"
 #include "lcs_frame_limit.hpp"
 
@@ -6,6 +7,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <cstdlib>
 #include <chrono>
 
 namespace lcs {
@@ -150,12 +153,10 @@ float lcs_mouse_aim_pitch_angle(float game_angle, float fov) noexcept {
     return mouse_aim_angle(g_mouse_camera_dy, pitch_sign(), game_angle, fov);
 }
 
+// Read each time, so that changing it in Settings applies at once.
 bool lcs_auto_aim() noexcept {
-    static const bool value = [] {
-        const LcsConfiguration &config = lcs_render_configuration();
-        return !config.initialized || config.controls.auto_aim;
-    }();
-    return value;
+    const LcsConfiguration &config = lcs_render_configuration();
+    return !config.initialized || config.controls.auto_aim;
 }
 
 bool lcs_free_aim_weapon(std::uint32_t weapon_type) noexcept {
@@ -165,6 +166,38 @@ bool lcs_free_aim_weapon(std::uint32_t weapon_type) noexcept {
 void lcs_set_free_aim(bool active) noexcept { g_free_aim.store(active, std::memory_order_relaxed); }
 
 bool lcs_free_aim_active() noexcept { return !lcs_auto_aim() && g_free_aim.load(std::memory_order_relaxed); }
+
+bool lcs_free_aim_shoulder(float (&source)[3], const float (&front)[3], const float (&player)[3], float &fov) noexcept {
+    constexpr float kSide = 0.45f;      // to the right of the player
+    constexpr float kHeight = 0.6f;     // above the player's middle, about the shoulder
+    constexpr float kDistance = 2.0f;   // behind that point
+    constexpr float kFov = 60.0f;
+    constexpr float kEaseSeconds = 0.25f;
+    static float blend = 0.0f;
+    static auto last = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const float step = std::min(std::chrono::duration<float>(now - last).count(), 0.1f) / kEaseSeconds;
+    last = now;
+    blend = std::clamp(blend + (lcs_free_aim_active() ? step : -step), 0.0f, 1.0f);
+    if (blend <= 0.0f) return false;
+    const float t = blend * blend * (3.0f - 2.0f * blend);  // smooth start and end
+
+    const float flat = std::hypot(front[0], front[1]);
+    if (flat < 1e-4f) return false;
+    const float right[3] = {front[1] / flat, -front[0] / flat, 0.0f};
+    const float pivot[3] = {player[0] + right[0] * kSide, player[1] + right[1] * kSide, player[2] + kHeight};
+    // Where the game put the camera already says how close a wall lets it be: never further than that.
+    const float game_distance = std::sqrt((source[0] - player[0]) * (source[0] - player[0]) +
+                                          (source[1] - player[1]) * (source[1] - player[1]) +
+                                          (source[2] - player[2]) * (source[2] - player[2]));
+    const float distance = std::min(kDistance, std::max(game_distance, 0.5f));
+    for (int i = 0; i < 3; ++i) {
+        const float shoulder = pivot[i] - front[i] * distance;
+        source[i] += (shoulder - source[i]) * t;
+    }
+    fov += (kFov - fov) * t;
+    return true;
+}
 
 bool lcs_player_aiming() noexcept {
     const std::int64_t last = g_last_aim_ms.load(std::memory_order_relaxed);

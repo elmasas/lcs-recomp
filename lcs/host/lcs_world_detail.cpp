@@ -1,4 +1,6 @@
 #include "lcs_world_detail.hpp"
+#include "lcs_frame_limit.hpp"
+#include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
 #include "psprecomp/runtime.hpp"
 
@@ -7,11 +9,21 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
+#include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
+#include <list>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <stdexcept>
+#include <thread>
+#include <unordered_map>
 
 namespace lcs {
 namespace {
@@ -238,10 +250,305 @@ DetailedWorldSector merge_world_sectors(const std::vector<WorldSectorSource> &so
     return result;
 }
 
+namespace {
+
+// Where one chunk lives on disk, read from guest memory by the game thread. The worker never touches guest memory.
+struct SourceSpec {
+    int x{}, y{};
+    std::uint32_t size{}, data_size{}, offset{}, relocation{}, relocation_count{};
+};
+
+struct SectorJob {
+    std::filesystem::path image;
+    std::vector<SourceSpec> specs;  // the target first
+    std::uint64_t key{};
+};
+
+struct BuiltSector {
+    DetailedWorldSector sector;
+    std::size_t donors{};
+};
+using SectorFuture = std::shared_future<std::shared_ptr<const BuiltSector>>;
+
+std::shared_ptr<const BuiltSector> build_sector(const SectorJob &job) {
+    std::ifstream image(job.image, std::ios::binary);
+    if (!image) throw std::runtime_error("could not open world image");
+    std::vector<WorldSectorSource> sources;
+    for (std::size_t index = 0u; index < job.specs.size(); ++index) {
+        const SourceSpec &spec = job.specs[index];
+        try {
+            WorldSectorSource source;
+            source.x = spec.x;
+            source.y = spec.y;
+            source.data_size = spec.data_size;
+            source.data.resize(spec.size - 32u);
+            {
+                const perf::Scope read_scope(perf::kWorldReadUs);
+                image.seekg(spec.offset);
+                image.read(reinterpret_cast<char *>(source.data.data()),
+                           static_cast<std::streamsize>(source.data.size()));
+            }
+            if (!image) throw std::runtime_error("could not read detailed world neighbour");
+            source.relocations.reserve(spec.relocation_count);
+            for (std::uint32_t i = 0u; i < spec.relocation_count; ++i)
+                source.relocations.push_back(u32(source.data, spec.relocation - 32u + i * 4u));
+            validate_source(source);
+            sources.push_back(std::move(source));
+        } catch (const std::exception &) {
+            if (index == 0u) throw;
+            image.clear();  // A bad donor must not discard the valid target and neighbours.
+        }
+    }
+    auto built = std::make_shared<BuiltSector>();
+    {
+        const perf::Scope merge_scope(perf::kWorldMergeUs);
+        built->sector = merge_world_sectors(sources);
+    }
+    built->donors = sources.size();
+    return built;
+}
+
+// Merged sectors stay in memory: the disc does not change, and the same sectors come back all the time (the safehouse
+// block's sectors reload every few seconds at a street corner). The worker builds the sectors next to the player before
+// the game asks for them, so crossing a sector boundary costs a copy instead of a read and a merge on the game thread.
+// LCS_WORLD_CACHE=0 builds every sector on the game thread, as before.
+class SectorCache {
+public:
+    static SectorCache &instance() {
+        static SectorCache *cache = new SectorCache();  // never destroyed: the worker may still run at exit
+        return *cache;
+    }
+
+    static bool enabled() {
+        static const bool on = [] {
+            const char *text = std::getenv("LCS_WORLD_CACHE");
+            return text == nullptr || *text != '0';
+        }();
+        return on;
+    }
+
+    // For the sector the game needs now.
+    SectorFuture need(const SectorJob &job) {
+        std::unique_lock lock(mutex_);
+        const auto found = entries_.find(job.key);
+        if (found != entries_.end()) {
+            touch(found->second);
+            if (found->second.started) {
+                perf::add(perf::kWorldCacheHits);
+                return found->second.future;
+            }
+            // Still queued: the game thread cannot wait behind other prefetches.
+            found->second.started = true;
+            const auto promise = found->second.promise;
+            const SectorFuture future = found->second.future;
+            lock.unlock();
+            run(job, *promise);
+            return future;
+        }
+        Entry &entry = insert(job.key);
+        entry.started = true;
+        const auto promise = entry.promise;
+        const SectorFuture future = entry.future;
+        lock.unlock();
+        run(job, *promise);
+        return future;
+    }
+
+    // Replaces what was still queued: the player has moved on from it.
+    void prefetch(std::vector<SectorJob> jobs) {
+        std::lock_guard lock(mutex_);
+        for (const SectorJob &stale : queue_) {
+            const auto found = entries_.find(stale.key);
+            if (found != entries_.end() && !found->second.started) {
+                lru_.erase(found->second.position);
+                entries_.erase(found);
+            }
+        }
+        queue_.clear();
+        for (SectorJob &job : jobs) {
+            const auto found = entries_.find(job.key);
+            if (found != entries_.end()) {
+                touch(found->second);
+                continue;
+            }
+            insert(job.key);
+            queue_.push_back(std::move(job));
+        }
+        if (!started_) {
+            started_ = true;
+            std::thread(&SectorCache::worker, this).detach();
+        }
+        wake_.notify_one();
+    }
+
+private:
+    struct Entry {
+        std::shared_ptr<std::promise<std::shared_ptr<const BuiltSector>>> promise;
+        SectorFuture future;
+        std::list<std::uint64_t>::iterator position;
+        bool started{};
+    };
+    // Up to ~10 MB each; a typical sector is ~6 MB.
+    static constexpr std::size_t kCapacity = 48u;
+
+    using Promise = std::promise<std::shared_ptr<const BuiltSector>>;
+
+    static void run(const SectorJob &job, Promise &promise) {
+        try {
+            promise.set_value(build_sector(job));
+        } catch (...) {
+            promise.set_exception(std::current_exception());
+        }
+    }
+
+    void touch(Entry &entry) { lru_.splice(lru_.begin(), lru_, entry.position); }
+
+    Entry &insert(std::uint64_t key) {
+        while (entries_.size() >= kCapacity) {
+            // The oldest finished entry. A future someone holds keeps its data alive by itself.
+            auto victim = lru_.end();
+            for (auto it = std::prev(lru_.end());; --it) {
+                const auto found = entries_.find(*it);
+                if (found->second.started) {
+                    victim = it;
+                    break;
+                }
+                if (it == lru_.begin()) break;
+            }
+            if (victim == lru_.end()) break;
+            entries_.erase(*victim);
+            lru_.erase(victim);
+        }
+        lru_.push_front(key);
+        Entry entry;
+        entry.promise = std::make_shared<Promise>();
+        entry.future = entry.promise->get_future().share();
+        entry.position = lru_.begin();
+        return entries_.emplace(key, std::move(entry)).first->second;
+    }
+
+    void worker() {
+        set_host_thread_name(L"WorldDetail");
+        std::unique_lock lock(mutex_);
+        for (;;) {
+            wake_.wait(lock, [this] { return !queue_.empty(); });
+            SectorJob job = std::move(queue_.front());
+            queue_.pop_front();
+            const auto found = entries_.find(job.key);
+            if (found == entries_.end() || found->second.started) continue;
+            found->second.started = true;
+            const auto promise = found->second.promise;
+            lock.unlock();
+            run(job, *promise);
+            lock.lock();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable wake_;
+    std::deque<SectorJob> queue_;
+    std::unordered_map<std::uint64_t, Entry> entries_;
+    std::list<std::uint64_t> lru_;
+    bool started_{};
+};
+
+std::uint32_t chunk_at(psprecomp::GuestMemory &memory, std::uint32_t level, int col, int row) {
+    if (row < 0 || row > 35) return 0u;
+    const auto begin = memory.load32(level + 4 + row * 8);
+    const auto end = memory.load32(level + 12 + row * 8);
+    const int first = memory.load32(level + 8 + row * 8);
+    if (col < first || begin + (col - first) * 32 >= end) return 0u;
+    return begin + (col - first) * 32;
+}
+
+// The chunks a sector merges, chosen as the game thread always did: a large sector keeps fewer donors.
+SectorJob describe_sector(psprecomp::GuestMemory &memory, std::uint32_t level, const std::filesystem::path &image,
+                          std::uint32_t island, std::uint32_t header, int x, int y, std::size_t available) {
+    SectorJob job;
+    job.image = image;
+    std::uint64_t key = 14695981039346656037ull;
+    const auto mix = [&key](std::uint64_t value) { key = (key ^ value) * 1099511628211ull; };
+    mix(island);
+    std::vector<std::array<int, 3>> chunks;  // header, col, row
+    chunks.push_back({static_cast<int>(header), x, y});
+    for (int row = y - 1; row <= y + 1; ++row)
+        for (int col = x - 1; col <= x + 1; ++col) {
+            const auto h = chunk_at(memory, level, col, row);
+            if (h != 0u && h != header) chunks.push_back({static_cast<int>(h), col, row});
+        }
+    std::size_t total = 48;
+    for (const auto &chunk : chunks) {
+        const auto h = static_cast<std::uint32_t>(chunk[0]);
+        const auto size = memory.load32(h + 8);
+        const bool target = h == header;
+        if (memory.load32(h) != 0x57524C44u || memory.load32(h + 4) || memory.load32(h + 28) ||
+            size < 80 || size > kWorldBufferSize) {
+            if (target) throw std::runtime_error("unsupported world chunk format");
+            continue;
+        }
+        if (!target && total + size + 512u * 1024u + kRawLoadReserve > available) continue;
+        SourceSpec spec;
+        spec.x = chunk[1];
+        spec.y = chunk[2];
+        spec.size = size;
+        spec.data_size = memory.load32(h + 12);
+        spec.offset = memory.load32(h + 24);
+        spec.relocation = memory.load32(h + 16);
+        spec.relocation_count = memory.load32(h + 20);
+        total += spec.data_size;
+        mix((static_cast<std::uint64_t>(spec.offset) << 32) | spec.size);
+        mix((static_cast<std::uint64_t>(static_cast<std::uint32_t>(spec.x)) << 32) |
+            static_cast<std::uint32_t>(spec.y));
+        job.specs.push_back(spec);
+    }
+    job.key = key;
+    return job;
+}
+
+void add_relocations(std::uint8_t *data, std::size_t size, const std::vector<std::uint32_t> &relocations,
+                     std::uint32_t base) {
+    for (const auto at : relocations) {
+        if (at < 32u || at - 32u + 4u > size) throw std::runtime_error("world sector write outside chunk");
+        std::uint32_t value = 0u;
+        std::memcpy(&value, data + at - 32u, 4u);
+        value += base;
+        std::memcpy(data + at - 32u, &value, 4u);
+    }
+}
+
+}  // namespace
+
 void reset_world_detail() { loaded.clear(); pending_refresh.clear(); }
+
+void world_detail_write_state(state::Writer &out) {
+    out.u32(static_cast<std::uint32_t>(loaded.size()));
+    for (const auto &[key, sector] : loaded) {
+        out.u32(key);
+        out.pod(sector);
+    }
+    out.u32(static_cast<std::uint32_t>(pending_refresh.size()));
+    for (const std::uint32_t world : pending_refresh) out.u32(world);
+}
+
+bool world_detail_read_state(state::Reader &in) {
+    std::map<std::uint32_t, LoadedSector> sectors;
+    std::set<std::uint32_t> pending;
+    const std::uint32_t count = in.u32();
+    for (std::uint32_t i = 0; in.ok() && i < count; ++i) {
+        const std::uint32_t key = in.u32();
+        sectors[key] = in.pod<LoadedSector>();
+    }
+    const std::uint32_t pending_count = in.u32();
+    for (std::uint32_t i = 0; in.ok() && i < pending_count; ++i) pending.insert(in.u32());
+    if (!in.ok()) return false;
+    loaded = std::move(sectors);
+    pending_refresh = std::move(pending);
+    return true;
+}
 
 bool expand_world_sector(psprecomp::Runtime &runtime, std::uint32_t world,
                          std::uint32_t header, std::uint32_t address) {
+    const perf::Scope perf_scope(perf::kWorldUs);
     auto &memory = runtime.memory();
     if (address < kWorldBufferBase || address >= kWorldBufferEnd) return false;
     const auto buffer = kWorldBufferBase + (address - kWorldBufferBase) / kWorldBufferSize * kWorldBufferSize;
@@ -252,7 +559,6 @@ bool expand_world_sector(psprecomp::Runtime &runtime, std::uint32_t world,
     if (!level || memory.load32(header) != 0x57524C44u) return false;
     if (memory.load32(header + 4) || memory.load32(header + 28)) return false;
     try {
-        std::vector<std::array<std::uint32_t, 3>> neighbours;
         int x = -1, y = -1;
         for (int row = 0; row < 36; ++row) {
             const auto begin = memory.load32(level + 4 + row * 8);
@@ -262,51 +568,31 @@ bool expand_world_sector(psprecomp::Runtime &runtime, std::uint32_t world,
             }
         }
         if (x < 0) return false; // Interior and mission chunks retain their own layout.
-        neighbours.push_back({header, static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)});
-        for (int row = std::max(0, y - 1); row <= std::min(35, y + 1); ++row) {
-            const auto begin = memory.load32(level + 4 + row * 8);
-            const auto end = memory.load32(level + 12 + row * 8);
-            const int first = memory.load32(level + 8 + row * 8);
-            for (int col = x - 1; col <= x + 1; ++col) {
-                if (col < first || begin + (col - first) * 32 >= end) continue;
-                const auto h = begin + (col - first) * 32;
-                if (h != header) neighbours.push_back({h, static_cast<std::uint32_t>(col), static_cast<std::uint32_t>(row)});
-            }
-        }
         const auto island = memory.load32(world + 12);
         constexpr const char *names[]{"", "INDUST.IMG", "COMMER.IMG", "SUBURB.IMG", "UNDERG.IMG"};
         if (island < 1 || island > 4) return false;
-        std::ifstream image(runtime.game_root() / "PSP_GAME/USRDIR/MODELS" / names[island], std::ios::binary);
-        if (!image) return false;
-        std::vector<WorldSectorSource> sources;
-        const auto available = buffer + kWorldBufferSize - address;
-        std::size_t total = 48;
-        for (const auto &neighbour : neighbours) {
-          try {
-            const auto h = neighbour[0], size = memory.load32(h + 8);
-            if (memory.load32(h) != 0x57524C44u || memory.load32(h + 4) || memory.load32(h + 28))
-                throw std::runtime_error("unsupported world chunk format");
-            if (size < 80 || size > kWorldBufferSize) throw std::runtime_error("invalid world chunk size");
-            // Leave room for the merged lists. A large sector keeps fewer donors.
-            if (!sources.empty() && total + size + 512u * 1024u + kRawLoadReserve > available) continue;
-            WorldSectorSource source;
-            source.x = neighbour[1]; source.y = neighbour[2];
-            source.data_size = memory.load32(h + 12);
-            source.data.resize(size - 32);
-            image.seekg(memory.load32(h + 24));
-            image.read(reinterpret_cast<char *>(source.data.data()), source.data.size());
-            if (!image) throw std::runtime_error("could not read detailed world neighbour");
-            const auto relocation = memory.load32(h + 16), count = memory.load32(h + 20);
-            for (unsigned i = 0; i < count; ++i) source.relocations.push_back(u32(source.data, relocation - 32 + i * 4));
-            validate_source(source);
-            total += source.data_size;
-            sources.push_back(std::move(source));
-          } catch (const std::exception &) {
-            if (neighbour[0] == header) throw;
-            image.clear(); // A bad donor must not discard the valid target and neighbours.
-          }
+        const auto image = runtime.game_root() / "PSP_GAME/USRDIR/MODELS" / names[island];
+        const std::size_t available = buffer + kWorldBufferSize - address;
+        const SectorJob job = describe_sector(memory, level, image, island, header, x, y, available);
+        std::shared_ptr<const BuiltSector> built;
+        if (SectorCache::enabled()) {
+            built = SectorCache::instance().need(job).get();
+            std::vector<SectorJob> around;
+            for (int row = y - 1; row <= y + 1; ++row)
+                for (int col = x - 1; col <= x + 1; ++col) {
+                    const auto h = chunk_at(memory, level, col, row);
+                    if (h == 0u || h == header) continue;
+                    try {
+                        around.push_back(describe_sector(memory, level, image, island, h, col, row, available));
+                    } catch (const std::exception &) {
+                    }
+                }
+            SectorCache::instance().prefetch(std::move(around));
+        } else {
+            built = build_sector(job);
         }
-        auto sector = merge_world_sectors(sources);
+        const DetailedWorldSector &sector = built->sector;
+        perf::add(perf::kWorldSectors);
         const auto buffer_end = kWorldBufferBase + ((address - kWorldBufferBase) / kWorldBufferSize + 1) * kWorldBufferSize;
         const auto next = (address + sector.data.size() + 32 + 15) & ~15u;
         if (address < kWorldBufferBase || next >= buffer_end || buffer_end - next < kRawLoadReserve || buffer_end > kWorldBufferEnd)
@@ -320,8 +606,11 @@ bool expand_world_sector(psprecomp::Runtime &runtime, std::uint32_t world,
         state.original_count = sector.original_swap_count;
         state.detailed_swaps = address - 32 + u32(sector.data, 44);
         state.detailed_count = u16(sector.data, 40);
-        for (auto at : sector.relocations) write(sector.data, at - 32, u32(sector.data, at - 32) + address - 32);
+        // The guest buffer is relocated in place: a second copy of ~6 MB here is a frame's worth of game-thread time.
         memory.copy_in(address, sector.data);
+        std::uint8_t *guest = memory.raw_pointer(address, sector.data.size());
+        if (guest == nullptr) throw std::runtime_error("scenery buffer is not contiguous");
+        add_relocations(guest, sector.data.size(), sector.relocations, address - 32);
         memory.store32(world + 124, next);
         loaded[address] = state;
         const bool detailed = view_distance_scale() >= 2.0f;
@@ -330,7 +619,7 @@ bool expand_world_sector(psprecomp::Runtime &runtime, std::uint32_t world,
         memory.store16(address + 40, detailed ? state.detailed_count : state.original_count);
         memory.store32(address + 44, detailed ? state.detailed_swaps : state.original_swaps);
         std::cerr << "[world-detail] island=" << island << " sector=" << x << ',' << y
-                  << " donors=" << sources.size() << " bytes=" << sector.data.size() << '\n';
+                  << " donors=" << built->donors << " bytes=" << sector.data.size() << '\n';
         return true;
     } catch (const std::exception &error) {
         std::cerr << "[world-detail] original sector retained: " << error.what() << '\n';

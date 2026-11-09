@@ -1,0 +1,6 @@
+# The Portland loop, flown above the tallest buildings: at 60 the player can hit them and die.
+1164 -220 150
+800 -220 150
+800 -800 150
+1400 -800 150
+1400 -220 150

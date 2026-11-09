@@ -144,6 +144,35 @@ GeListPrescan prescan_ge_list(psprecomp::GuestMemory &memory, std::uint32_t list
     return result;
 }
 
+void ge_exec_write_state(state::Writer &out) {
+    out.pod(ge_commands);
+    out.pod(ge_transform);
+    out.u32(ge_base_register);
+    out.u32(ge_offset_address);
+    out.u32(ge_vertex_address);
+    out.u32(ge_index_address);
+    out.boolean(ge_finish_seen);
+    out.u32(ge_finish_arg);
+}
+
+bool ge_exec_read_state(state::Reader &in) {
+    const auto commands = in.pod<std::array<std::uint32_t, 256>>();
+    const auto transform = in.pod<GeTransformState>();
+    const std::uint32_t base = in.u32(), offset = in.u32(), vertex = in.u32(), index = in.u32();
+    const bool finish_seen = in.boolean();
+    const std::uint32_t finish_arg = in.u32();
+    if (!in.ok()) return false;
+    ge_commands = commands;
+    ge_transform = transform;
+    ge_base_register = base;
+    ge_offset_address = offset;
+    ge_vertex_address = vertex;
+    ge_index_address = index;
+    ge_finish_seen = finish_seen;
+    ge_finish_arg = finish_arg;
+    return true;
+}
+
 bool rendered_list_finished() { return ge_finish_seen; }
 std::uint32_t rendered_finish_argument() { return ge_finish_arg; }
 

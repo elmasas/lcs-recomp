@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_trainer.hpp"
 #include "lcs_widescreen.hpp"
 #include <bit>
 #include <cmath>
@@ -3140,6 +3141,8 @@ L_089C4F2C:
     if (rt.invoke_chained_direct<&recomp_unit_0057_entry, 57u, 174u, 0x088E8DFCu>(ctx, &aot_mem) && ctx.pc == 0x089C4F34u) goto L_089C4F34;
     return;
 L_089C4F34:
+    // The game's main loop. The trainer runs its routines here, on the game's thread.
+    if (lcs::trainer_frame(rt, ctx)) return;
     ctx.gpr[31] = (0x089C4F3Cu);
     // nop
     if (rt.invoke_chained_direct<&recomp_unit_0111_entry, 111u, 607u, 0x089C27A4u>(ctx, &aot_mem) && ctx.pc == 0x089C4F3Cu) goto L_089C4F3C;

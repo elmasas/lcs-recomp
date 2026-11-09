@@ -1,6 +1,7 @@
 #include "lcs_controls.hpp"
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_trainer.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -2123,6 +2124,7 @@ L_089AC94C:
     ctx.pc = jump_target;
     return;
 L_089AC978:
+    lcs::trainer_update_position(rt, ctx.gpr[4]);
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-240));
     ctx.gpr[5] = (aot_mem.aot_load32(ctx.gpr[4] + static_cast<std::uint32_t>(404)));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(220), ctx.gpr[16]);
