@@ -1160,6 +1160,9 @@ void trainer_test_step(psprecomp::Runtime &runtime, std::uint32_t ped) {
             trainer_set_toggle(TrainerToggle::NeverFallOffBike, true);
             if (std::getenv("LCS_TEST_ONFOOT") == nullptr)  // LCS_TEST_ONFOOT: outdoors, but on foot
                 trainer_spawn_vehicle(model != nullptr ? std::atoi(model) : 172);
+            if (const char *set = std::getenv("LCS_TEST_WEAPONS")) {  // LCS_TEST_WEAPONS=A or B: a weapon set, for aim tests
+                trainer_request(set[0] == 'B' ? TrainerAction::WeaponsB : TrainerAction::WeaponsA);
+            }
         } else if (step == 2 && std::getenv("LCS_TEST_VEHICLE") == nullptr && std::getenv("LCS_TEST_ONFOOT") == nullptr) {
             g_test_buttons.store(static_cast<int>(kCross));
         } else if (step == 5) {

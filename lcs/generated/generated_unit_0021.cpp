@@ -4,6 +4,8 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace psprecomp {
@@ -151,10 +153,12 @@ static void crosshair_shot(Runtime &rt, AllegrexContext &ctx, GuestMemory::AotFa
     aot_mem.aot_store32(0x08B832A0u + 384u, std::bit_cast<std::uint32_t>(0.5f));
     aot_mem.aot_store32(0x08B832A0u + 388u, std::bit_cast<std::uint32_t>(0.5f));
 
-    // Camera ray.
-    const std::uint32_t ray = ctx.gpr[29] - 48u;
+    // Camera ray. The call runs on a stack of its own in the host's scratch area (as the GPS and the distant lights do),
+    // not deeper on the game thread's own stack.
+    constexpr std::uint32_t kScratch = 0x0BF40000u, kCallStack = kScratch + 0x10000u - 64u;
+    const std::uint32_t ray = kScratch;
     AllegrexContext target = ctx;
-    target.gpr[29] = ctx.gpr[29] - 64u;
+    target.gpr[29] = kCallStack;
     target.gpr[4] = 0x08B832A0u;
     target.gpr[5] = ctx.gpr[29] + 96u;
     target.gpr[6] = ray;
@@ -163,9 +167,26 @@ static void crosshair_shot(Runtime &rt, AllegrexContext &ctx, GuestMemory::AotFa
     target.fpr[12] = std::bit_cast<float>(aot_mem.aot_load32(info.gpr[2] + 4u));
     if (!rt.invoke_isolated_aot(0x088ED398u, target)) return;
 
-    // New end point.
-    for (std::uint32_t i = 0; i < 12u; i += 4u)
-        aot_mem.aot_store32(ctx.gpr[29] + 80u + i, aot_mem.aot_load32(ray + 16u + i));
+    // The shot runs along the camera ray through the crosshair: from the ray's start, which the game puts level with the
+    // gun (beside the shoulder), to its far end at the weapon's range. So it hits what is under the crosshair at any
+    // distance, which a shot from the gun itself only does at full range. The game's own crosshair mode fires the
+    // shotgun's pellets this way (0x0885B5E0).
+    float source[3], far_point[3];
+    for (std::uint32_t i = 0; i < 3u; ++i) {
+        source[i] = std::bit_cast<float>(aot_mem.aot_load32(ray + i * 4u));
+        far_point[i] = std::bit_cast<float>(aot_mem.aot_load32(ray + 16u + i * 4u));
+    }
+    static const bool aim_log = std::getenv("LCS_TEST_AIM_LOG") != nullptr;  // test runs only
+    if (aim_log)
+        std::fprintf(stderr, "[aim] weapon %u gun %.2f %.2f %.2f start %.2f %.2f %.2f end %.2f %.2f %.2f\n",
+                     aot_mem.aot_load32(ctx.gpr[16]), std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + 96u)),
+                     std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + 100u)),
+                     std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + 104u)), source[0], source[1], source[2],
+                     far_point[0], far_point[1], far_point[2]);
+    for (std::uint32_t i = 0; i < 3u; ++i) {
+        aot_mem.aot_store32(ctx.gpr[29] + 96u + i * 4u, std::bit_cast<std::uint32_t>(source[i]));
+        aot_mem.aot_store32(ctx.gpr[29] + 80u + i * 4u, std::bit_cast<std::uint32_t>(far_point[i]));
+    }
 }
 void recomp_unit_0021_entry(Runtime &rt, AllegrexContext &ctx, std::uint16_t direct_entry_id, GuestMemory::AotFastView &aot_mem) {
     std::uint32_t jump_target = 0u;
