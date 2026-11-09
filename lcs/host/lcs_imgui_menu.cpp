@@ -10,6 +10,7 @@
 #include "lcs_frontend_options.hpp"
 #include "lcs_pause_menu.hpp"
 #include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_texture_pack.hpp"
 #include "lcs_trainer.hpp"
@@ -544,8 +545,8 @@ void register_settings() {
     }
 
     s = {};
-    s.key = "display.RadioWheelSlowMotion"; s.page = "Game"; s.section = "Radio"; s.label = "Slow motion in the radio wheel";
-    s.help = "Slows the game while the radio wheel is open. Hold Tab, or the right stick's button, in a vehicle.";
+    s.key = "display.RadioWheelSlowMotion"; s.page = "Game"; s.section = "Radio"; s.label = "Slow motion in the radio and weapon wheels";
+    s.help = "Slows the game while a wheel is open. Hold Tab, or the right stick's button: the radio in a vehicle, weapons on foot.";
     s.type = Type::Toggle; s.defaultValue = 1;
     s.read = [] { return config().display.radio_wheel_slow_motion ? 1 : 0; };
     s.persist = [](int v) { host_settings_write("display", "RadioWheelSlowMotion", v != 0 ? "true" : "false"); };
@@ -938,7 +939,7 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     static const bool test_enabled = std::getenv("LCS_TEST_MENU") != nullptr;
     const bool open = host_settings_open();
     const std::string overlay = trainer_overlay_text();
-    const bool frontend = frontend_menu_active() || radio_wheel_open() || lcs_menu_active();
+    const bool frontend = frontend_menu_active() || radio_wheel_open() || weapon_wheel_open() || lcs_menu_active();
     if (!open && !g_was_open && !test_enabled && overlay.empty() && !frontend) return;
     g_device = device;
     if (!g_initialized) {
@@ -971,6 +972,7 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     if (!open_now && g_was_open) ui::closeSettingsMenu();
     frontend_menu_draw();
     radio_wheel_draw();
+    weapon_wheel_draw();
     g_was_open = open_now;
     if (open_now && !ui::drawSettingsMenu()) {
         host_settings_handle(HostSettingsKey::Close);

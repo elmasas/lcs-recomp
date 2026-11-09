@@ -44,7 +44,7 @@ ACTION_LABELS = {
     "Pause": ("Pause", "pause", "pause"),
     "Camera": ("Change camera", "camera", "camera"),
     "Handbrake": ("Handbrake", "—", "handbrake"),
-    "RadioWheel": ("Radio wheel", "—", "radio wheel: hold, point, release"),
+    "RadioWheel": ("Radio / weapon wheel", "weapon wheel: hold, point, release", "radio wheel: hold, point, release"),
 }
 
 # Pad ini keys (Xbox names) and display: Xbox, PlayStation, on-foot role.

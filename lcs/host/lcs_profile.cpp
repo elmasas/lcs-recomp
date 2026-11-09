@@ -4,6 +4,7 @@
 #include "lcs_frontend_options.hpp"
 #include "lcs_pause_menu.hpp"
 #include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "lcs_save_slots.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_state.hpp"
@@ -3368,6 +3369,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             std::uint32_t buttons = frontend_boot_pad(trainer_pad_buttons(host.buttons, analog_x, analog_y));
             buttons = pause_menu_game_tick(rt, buttons);
             buttons = radio_wheel_game_tick(rt, buttons);
+            buttons = weapon_wheel_game_tick(rt, buttons);
             // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.
             static bool slots_held = false;
             if (save_slots_open()) slots_held = true;

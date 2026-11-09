@@ -1,6 +1,7 @@
 #include "lcs_frontend_menu.hpp"
 #include "lcs_frontend_options.hpp"
 #include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "display_window.hpp"
 
 #include <string>
@@ -602,6 +603,10 @@ HostInputState display_window_input() {
     const auto publish = [&]() -> HostInputState {
         frontend_options_note_input(input.buttons);
         radio_wheel_input(g_radio_key_held || g_radio_pad_held, lcs_player_in_vehicle() && !lcs_menu_active() && !frontend_menu_active() && !host_settings_open());
+        // The same key on foot: the weapon wheel (not while free-aiming, when the weapon can't change).
+        weapon_wheel_input(g_radio_key_held || g_radio_pad_held,
+                           !lcs_player_in_vehicle() && lcs_camera_in_use() && !lcs_free_aim_active() && !lcs_menu_active() &&
+                               !frontend_menu_active() && !host_settings_open());
         lcs_camera_set_axes(input.camera_x, input.camera_y);
         // While free-aiming: no sprint and no weapon switch (on foot, Cross and the d-pad's left and right).
         if (lcs_free_aim_active()) input.buttons &= ~(kPspCross | kPspLeft | kPspRight);
@@ -713,6 +718,10 @@ HostInputState display_window_input() {
             radio_wheel_pointer_mouse(mouse_dx, mouse_dy);
             input.camera_x = 0;
             input.camera_y = 0;
+        } else if (weapon_wheel_open()) {  // or at weapons
+            weapon_wheel_pointer_mouse(mouse_dx, mouse_dy);
+            input.camera_x = 0;
+            input.camera_y = 0;
         } else if (capture) {
             lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
         }
@@ -782,9 +791,12 @@ HostInputState display_window_input() {
                 }
             };
             apply_stick(pad.gamepad.lx, pad.gamepad.ly, controls.bindings.left_stick);
-            if (radio_wheel_open()) {
+            if (radio_wheel_open() || weapon_wheel_open()) {
                 const float x = static_cast<float>(pad.gamepad.rx) / 32767.0f, y = -static_cast<float>(pad.gamepad.ry) / 32767.0f;
-                if (std::hypot(x, y) > 0.35f) radio_wheel_pointer_stick(x, y);
+                if (std::hypot(x, y) > 0.35f) {
+                    if (radio_wheel_open()) radio_wheel_pointer_stick(x, y);
+                    else weapon_wheel_pointer_stick(x, y);
+                }
             } else {
                 apply_stick(pad.gamepad.rx, pad.gamepad.ry, controls.bindings.right_stick);
             }
