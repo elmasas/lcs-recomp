@@ -1,6 +1,6 @@
 #pragma once
-// A wheel of the player's weapons, on foot: hold the radio wheel's key (Tab, or the right stick's click), point at a
-// weapon, let go. A short press takes the next weapon. Each weapon shows the game's own HUD icon, with its colour, from
+// A wheel of the player's weapons, on foot: hold its key (Tab, as in GTA V, or the right stick's click), point at a
+// weapon, let go. A short press does nothing, as in GTA V: the mouse wheel changes weapon. Each weapon shows the game's own HUD icon, with its colour, from
 // the player's texture pack when it has them or else as the game drew it. The weapon changes through the game's own
 // next/previous weapon buttons, pressed as many times as it takes, so the game stays in charge of the switch.
 

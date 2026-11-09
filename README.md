@@ -54,9 +54,9 @@ Every 5 minutes of play the game also saves a state on its own into Auto 1 to 3,
 
 ## Weapon wheel, radio wheel and GPS
 
-**Weapon wheel:** on foot, hold Tab, or press the right stick's button, then point at a weapon with the mouse or the right stick and let go; a short press takes the next weapon. Each weapon shows its HUD icon in its colour, with its ammo: from your texture pack when it has the icons, or else as the game draws them, kept the first time each weapon is on the HUD (until then, its name). Not while aiming.
+**Weapon wheel:** on foot, hold Tab, or press the right stick's button, then point at a weapon with the mouse or the right stick and let go. The mouse wheel, Q and E change weapon one at a time. Each weapon shows its HUD icon in its colour, with its ammo: from your texture pack when it has the icons, or else as the game draws them, kept the first time each weapon is on the HUD (until then, its name). Not while aiming.
 
-**Radio wheel:** in a vehicle, hold Tab, or press the right stick's button, then point at a station with the mouse or the right stick and let go. A short press tunes to the next station. Logos come from your texture pack when it has them. Otherwise each station's name shows until you've tuned to it once, and the game's own logo is kept from then on. The idea comes from VoidRadioWheel for San Andreas; none of its code or art is used.
+**Radio wheel:** in a vehicle, hold Q, or press the right stick's button, then point at a station with the mouse or the right stick and let go. A quick press of Q goes back a station, and E goes forward, as before. The keys follow GTA V on PC, and both wheels can be rebound under Controls. Logos come from your texture pack when it has them. Otherwise each station's name shows until you've tuned to it once, and the game's own logo is kept from then on. The idea comes from VoidRadioWheel for San Andreas; none of its code or art is used.
 
 **GPS:** in a vehicle, a line on the radar follows the roads to your marker or the mission's objective. It doesn't know one-way streets or which bridges the story has opened yet. Turn it off or change its width under Game, in F10 or Options. The idea comes from [GPS Redux](https://github.com/juicermv/GTA-GPS-Redux) for San Andreas; none of its code is used.
 

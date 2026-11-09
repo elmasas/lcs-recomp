@@ -546,7 +546,7 @@ void register_settings() {
 
     s = {};
     s.key = "display.RadioWheelSlowMotion"; s.page = "Game"; s.section = "Radio"; s.label = "Slow motion in the radio and weapon wheels";
-    s.help = "Slows the game while a wheel is open. Hold Tab, or the right stick's button: the radio in a vehicle, weapons on foot.";
+    s.help = "Slows the game while a wheel is open: hold Q in a vehicle for the radio, Tab on foot for weapons, or the right stick's button.";
     s.type = Type::Toggle; s.defaultValue = 1;
     s.read = [] { return config().display.radio_wheel_slow_motion ? 1 : 0; };
     s.persist = [](int v) { host_settings_write("display", "RadioWheelSlowMotion", v != 0 ? "true" : "false"); };

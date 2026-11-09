@@ -599,12 +599,12 @@ HostInputState display_window_input() {
     }
 
     HostInputState input{};
-    bool g_radio_key_held = false, g_radio_pad_held = false;
+    bool g_radio_key_held = false, g_radio_pad_held = false, g_weapon_key_held = false, g_weapon_pad_held = false;
     const auto publish = [&]() -> HostInputState {
         frontend_options_note_input(input.buttons);
         radio_wheel_input(g_radio_key_held || g_radio_pad_held, lcs_player_in_vehicle() && !lcs_menu_active() && !frontend_menu_active() && !host_settings_open());
-        // The same key on foot: the weapon wheel (not while free-aiming, when the weapon can't change).
-        weapon_wheel_input(g_radio_key_held || g_radio_pad_held,
+        // On foot: the weapon wheel (not while free-aiming, when the weapon can't change).
+        weapon_wheel_input(g_weapon_key_held || g_weapon_pad_held,
                            !lcs_player_in_vehicle() && lcs_camera_in_use() && !lcs_free_aim_active() && !lcs_menu_active() &&
                                !frontend_menu_active() && !host_settings_open());
         lcs_camera_set_axes(input.camera_x, input.camera_y);
@@ -687,6 +687,7 @@ HostInputState display_window_input() {
         const bool gameplay = (lcs_camera_in_use() || !lcs_camera_hook_enabled()) && !frontend_menu_active();
         const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, game_menu, gameplay, is_down);
         g_radio_key_held = action_held(controls.bindings, BindAction::RadioWheel, is_down);
+        g_weapon_key_held = action_held(controls.bindings, BindAction::WeaponWheel, is_down);
         if (!test_keys.empty()) {
             static std::uint32_t last_buttons = 0xFFFFFFFFu;
             static bool last_menu = false;
@@ -773,6 +774,7 @@ HostInputState display_window_input() {
             };
             for (std::size_t button = 0u; button < static_cast<std::size_t>(PadButton::Count); ++button) {
                 if (pad_down(static_cast<PadButton>(button)) && pad_has(controls.bindings, static_cast<PadButton>(button), BindAction::RadioWheel)) g_radio_pad_held = true;
+                if (pad_down(static_cast<PadButton>(button)) && pad_has(controls.bindings, static_cast<PadButton>(button), BindAction::WeaponWheel)) g_weapon_pad_held = true;
             }
             const PadSample pad_sample = sample_pad(controls.bindings, driving, pad_down);
             input.buttons |= pad_sample.buttons;

@@ -1,5 +1,6 @@
 #pragma once
-// A wheel of the radio stations: hold its key in a vehicle, point at one, let go. A short press tunes to the next one.
+// A wheel of the radio stations: hold its key (Q, as in GTA V) in a vehicle, point at one, let go. A short press goes
+// back a station, as Q does on its own.
 // The idea is VoidRadioWheel's for San Andreas; none of its code or art is used here. Stations change through the game's
 // own radio button, pressed as many times as it takes, so the game's audio stays in charge.
 

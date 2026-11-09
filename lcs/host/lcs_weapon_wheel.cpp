@@ -245,12 +245,7 @@ std::uint32_t weapon_wheel_game_tick(psprecomp::Runtime &runtime, std::uint32_t 
 
     const int count = static_cast<int>(items.size());
     static int target_slot = -1;
-    if (g_tap.exchange(false) && count > 1) {
-        int index = 0;
-        for (int i = 0; i < count; ++i)
-            if (items[static_cast<std::size_t>(i)].slot == current) index = i;
-        target_slot = items[static_cast<std::size_t>((index + 1) % count)].slot;
-    }
+    g_tap.store(false);  // a short press does nothing, as in GTA V
     if (open && count > 0) {
         const float x = g_pointer_x.load(), y = g_pointer_y.load();
         int pointed = g_pointed.load();

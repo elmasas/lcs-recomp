@@ -79,6 +79,7 @@ enum class BindAction : std::uint8_t {
     Camera,
     Handbrake,
     RadioWheel,
+    WeaponWheel,
     Count,
 };
 
@@ -161,6 +162,7 @@ inline const char *bind_action_name(BindAction action) noexcept {
     case BindAction::Camera: return "Camera";
     case BindAction::Handbrake: return "Handbrake";
     case BindAction::RadioWheel: return "RadioWheel";
+    case BindAction::WeaponWheel: return "WeaponWheel";
     case BindAction::Count: return "";
     }
     return "";
@@ -212,7 +214,9 @@ inline ControlBindings default_control_bindings() {
     add(BindAction::Pause, {HostKey::Escape});
     add(BindAction::Camera, {HostKey::V});
     add(BindAction::Handbrake, {HostKey::Space});
-    add(BindAction::RadioWheel, {HostKey::Tab});
+    // As in GTA V on PC: hold Q in a vehicle for the radio, hold Tab on foot for weapons.
+    add(BindAction::RadioWheel, {HostKey::Q});
+    add(BindAction::WeaponWheel, {HostKey::Tab});
     const auto add_pad = [&](PadButton button, std::initializer_list<BindAction> actions) {
         auto &count = bindings.pad_count[static_cast<std::size_t>(button)];
         for (const BindAction action : actions) {
@@ -235,7 +239,7 @@ inline ControlBindings default_control_bindings() {
     add_pad(PadButton::DpadLeft, {BindAction::WeaponPrevious});
     add_pad(PadButton::DpadRight, {BindAction::WeaponNext});
     add_pad(PadButton::LeftClick, {BindAction::Down});
-    add_pad(PadButton::RightClick, {BindAction::RadioWheel});
+    add_pad(PadButton::RightClick, {BindAction::RadioWheel, BindAction::WeaponWheel});  // one button, as GTA V's LB
     return bindings;
 }
 
@@ -384,6 +388,7 @@ inline bool lookup_bind_action(std::string_view name, BindAction &action) noexce
         {"changecamera", BindAction::Camera},
         {"handbrake", BindAction::Handbrake},
         {"radiowheel", BindAction::RadioWheel},
+        {"weaponwheel", BindAction::WeaponWheel},
     };
     for (const Alias &alias : kAliases) {
         if (name == alias.name) {

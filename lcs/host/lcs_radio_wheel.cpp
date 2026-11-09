@@ -173,7 +173,15 @@ std::uint32_t radio_wheel_game_tick(psprecomp::Runtime &runtime, std::uint32_t b
     }
     const int current = static_cast<int>(memory.load8(vehicle + kVehicleRadio));
     g_current.store(current);
-    if (g_tap.exchange(false)) g_target.store((current + 1) % kCount);
+    if (test != nullptr) {  // unattended runs: each station change
+        static int logged = -1;
+        if (current != logged) std::cerr << "[radio-wheel] station " << current << "\n";
+        logged = current;
+    }
+    // A quick press goes back a station: Q, the wheel's key, is also "previous station", and that press is the wheel's
+    // while it decides between a tap and a hold (below).
+    if (g_tap.exchange(false)) g_target.store((current + kCount - 1) % kCount);
+    if (g_phase.load() != Phase::Closed) buttons &= ~(kPspLeft | kPspRight);
     if (open) {
         // The station plays as you point at it.
         int pointed = g_pointed.load();
