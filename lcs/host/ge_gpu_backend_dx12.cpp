@@ -3099,13 +3099,16 @@ void ge_gpu_backend_accumulate_color_triangles(
     try {
         const bool sampled_texture = draw.texture_enabled && ge_gpu_backend_texture_available(draw);
         const std::uint32_t first = static_cast<std::uint32_t>(s.vertices.size());
+        // Grown once and written in place: push_back per vertex was a measurable share of the GE worker's time.
+        s.vertices.resize(first + triangle_vertices.size());
+        Dx12UploadVertex *out = s.vertices.data() + first;
         for (const GeGpuVertex &source : triangle_vertices) {
             Dx12UploadVertex vertex = make_upload_vertex(source);
             if (sampled_texture && draw.texture_width != 0u && draw.texture_height != 0u) {
                 vertex.u /= static_cast<float>(draw.texture_width);
                 vertex.v /= static_cast<float>(draw.texture_height);
             }
-            s.vertices.push_back(vertex);
+            *out++ = vertex;
         }
         const std::uint32_t feedback_address = draw.texture_address & 0x001FFFF0u;
         const bool framebuffer_feedback = draw.texture_enabled &&
@@ -3154,27 +3157,31 @@ void ge_gpu_backend_accumulate_hardware_triangles(
         const std::uint32_t first_vertex = static_cast<std::uint32_t>(s.vertices.size());
         const std::uint32_t first_index = static_cast<std::uint32_t>(s.indices.size());
 
+        // Grown once and written in place (see ge_gpu_backend_accumulate_color_triangles).
+        s.vertices.resize(first_vertex + vertices_to_append);
+        Dx12UploadVertex *out = s.vertices.data() + first_vertex;
         if (indexed || triangle_indices.empty()) {
-            for (const GeGpuVertex &source : vertices)
-                s.vertices.push_back(make_upload_vertex(source));
+            for (const GeGpuVertex &source : vertices) *out++ = make_upload_vertex(source);
         } else {
             for (std::uint32_t index : triangle_indices) {
                 if (static_cast<std::size_t>(index) >= vertices.size()) {
                     s.vertices.resize(first_vertex);
                     return;
                 }
-                s.vertices.push_back(make_upload_vertex(vertices[index]));
+                *out++ = make_upload_vertex(vertices[index]);
             }
         }
 
         if (indexed) {
+            s.indices.resize(first_index + indices_to_append);
+            std::uint32_t *index_out = s.indices.data() + first_index;
             for (std::uint32_t index : triangle_indices) {
                 if (static_cast<std::size_t>(index) >= vertices.size()) {
                     s.vertices.resize(first_vertex);
                     s.indices.resize(first_index);
                     return;
                 }
-                s.indices.push_back(index);
+                *index_out++ = index;
             }
         }
 
@@ -3237,29 +3244,32 @@ bool ge_gpu_backend_accumulate_hardware_packed_0115(
     const std::uint32_t first_vertex = static_cast<std::uint32_t>(first_vertex64);
     const std::uint32_t first_index = static_cast<std::uint32_t>(s.indices.size());
     try {
+        // Grown once and copied in place, not ten bytes at a time.
+        s.packed_0115_vertices.resize(first_packed_byte + packed_append_bytes);
+        std::byte *packed_out = s.packed_0115_vertices.data() + first_packed_byte;
         if (indexed || triangle_indices.empty()) {
-            s.packed_0115_vertices.insert(s.packed_0115_vertices.end(),
-                                          packed_vertices.begin(), packed_vertices.end());
+            std::memcpy(packed_out, packed_vertices.data(), packed_vertices.size());
         } else {
             for (std::uint32_t index : triangle_indices) {
                 if (index >= vertex_count) {
                     s.packed_0115_vertices.resize(first_packed_byte);
                     return false;
                 }
-                const std::byte *source = packed_vertices.data() +
-                    static_cast<std::size_t>(index) * kPackedStride;
-                s.packed_0115_vertices.insert(s.packed_0115_vertices.end(),
-                                               source, source + kPackedStride);
+                std::memcpy(packed_out, packed_vertices.data() + static_cast<std::size_t>(index) * kPackedStride,
+                            kPackedStride);
+                packed_out += kPackedStride;
             }
         }
         if (indexed) {
+            s.indices.resize(first_index + index_append_count);
+            std::uint32_t *index_out = s.indices.data() + first_index;
             for (std::uint32_t index : triangle_indices) {
                 if (index >= vertex_count) {
                     s.packed_0115_vertices.resize(first_packed_byte);
                     s.indices.resize(first_index);
                     return false;
                 }
-                s.indices.push_back(index);
+                *index_out++ = index;
             }
         }
 
