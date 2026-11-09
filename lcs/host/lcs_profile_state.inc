@@ -27,6 +27,7 @@ std::filesystem::path state_file(int slot) {
     const char *directory = std::getenv("LCS_TEST_STATE_DIR");
     const std::filesystem::path root = directory != nullptr ? std::filesystem::path(directory)
                                                             : std::filesystem::path(game_root_folder()) / "STATES";
+    if (slot >= kStateManualSlots) return root / ("auto" + std::to_string(slot - kStateManualSlots + 1) + ".state");
     return root / ("slot" + std::to_string(slot + 1) + ".state");
 }
 
@@ -39,7 +40,8 @@ std::uint8_t *state_vram(psprecomp::Runtime &rt) {
 }
 
 // A quick whole-memory fingerprint, to check that a loaded state is what was saved.
-std::uint64_t state_memory_checksum(psprecomp::Runtime &rt) {
+std::uint64_t state_memory_checksum(const std::uint8_t *ram, std::size_t ram_size, const std::uint8_t *vram,
+                                    std::size_t vram_size) {
     std::uint64_t hash = 1469598103934665603ull;
     const auto feed = [&](const std::uint8_t *data, std::size_t size) {
         std::size_t i = 0u;
@@ -50,9 +52,13 @@ std::uint64_t state_memory_checksum(psprecomp::Runtime &rt) {
         }
         for (; i < size; ++i) hash = (hash ^ data[i]) * 1099511628211ull;
     };
-    feed(state_ram(rt), rt.memory().size());
-    feed(state_vram(rt), rt.memory().vram_size());
+    feed(ram, ram_size);
+    feed(vram, vram_size);
     return hash;
+}
+
+std::uint64_t state_memory_checksum(psprecomp::Runtime &rt) {
+    return state_memory_checksum(state_ram(rt), rt.memory().size(), state_vram(rt), rt.memory().vram_size());
 }
 
 // Memory in 4 KB pages; a page of zeros costs one byte.
@@ -985,7 +991,41 @@ void commit_kernel_state(StateTables &&t) {
     refresh_lcs_post_dispatch_hook();  // the hand-off hook is only installed while a hand-off is pending
 }
 
-bool save_state(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, int slot, std::string &error) {
+// Writes a state file through a temporary name, so a crash halfway leaves the previous state whole.
+bool write_state_file(const std::filesystem::path &path, const std::vector<std::uint8_t> &data, std::string &error) {
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
+        if (!file) {
+            error = "could not write " + temporary.string();
+            return false;
+        }
+    }
+    std::filesystem::rename(temporary, path, ec);
+    if (ec) {
+        error = "could not replace " + path.string() + ": " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+// Automatic states write their file on this thread, so the game only pauses for taking the snapshot. The next save or
+// load waits for it first.
+struct StateFileWriter {
+    std::thread thread;
+    void wait() {
+        if (thread.joinable()) thread.join();
+    }
+    ~StateFileWriter() { wait(); }
+};
+StateFileWriter g_state_file_writer;
+
+bool save_state(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, int slot, std::string &error,
+                bool write_in_background = false) {
+    g_state_file_writer.wait();
     static_assert(std::is_trivially_copyable_v<psprecomp::AllegrexContext>);
     ge_worker_wait_idle();  // queued draws must have run before the registers are read
     state::Writer out;
@@ -993,7 +1033,9 @@ bool save_state(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, int slo
     out.u32(kStateVersion);
     out.u32(rt.memory().size());
     out.u32(rt.memory().vram_size());
-    out.u64(state_memory_checksum(rt));
+    constexpr std::size_t kChecksumAt = sizeof kStateMagic + 3u * sizeof(std::uint32_t);
+    // In the background the checksum is worked out later, from the copy of memory.
+    out.u64(write_in_background ? 0u : state_memory_checksum(rt));
 
     out.begin("CPU ");
     out.pod(ctx);
@@ -1025,32 +1067,35 @@ bool save_state(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, int slo
     world_detail_write_state(out);
     out.end();
 
-    out.begin("MEM ");
-    state_write_region(out, state_ram(rt), rt.memory().size());
-    state_write_region(out, state_vram(rt), rt.memory().vram_size());
-    out.end();
-
     const std::filesystem::path path = state_file(slot);
-    std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
-    const std::filesystem::path temporary = path.string() + ".tmp";
-    {
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        file.write(reinterpret_cast<const char *>(out.data().data()), static_cast<std::streamsize>(out.size()));
-        if (!file) {
-            error = "could not write " + temporary.string();
-            return false;
-        }
+    if (!write_in_background) {
+        out.begin("MEM ");
+        state_write_region(out, state_ram(rt), rt.memory().size());
+        state_write_region(out, state_vram(rt), rt.memory().vram_size());
+        out.end();
+        return write_state_file(path, out.data(), error);
     }
-    std::filesystem::rename(temporary, path, ec);
-    if (ec) {
-        error = "could not replace " + path.string() + ": " + ec.message();
-        return false;
-    }
+    // The game only waits for a straight copy of its memory; the checksum, the page encoding and the file are done on
+    // the writer thread from that copy.
+    std::vector<std::uint8_t> ram(state_ram(rt), state_ram(rt) + rt.memory().size());
+    std::vector<std::uint8_t> vram(state_vram(rt), state_vram(rt) + rt.memory().vram_size());
+    g_state_file_writer.thread = std::thread([path, data = out.take(), ram = std::move(ram), vram = std::move(vram)]() mutable {
+        const std::uint64_t checksum = state_memory_checksum(ram.data(), ram.size(), vram.data(), vram.size());
+        std::memcpy(data.data() + kChecksumAt, &checksum, sizeof checksum);
+        state::Writer memory;
+        memory.begin("MEM ");
+        state_write_region(memory, ram.data(), static_cast<std::uint32_t>(ram.size()));
+        state_write_region(memory, vram.data(), static_cast<std::uint32_t>(vram.size()));
+        memory.end();
+        data.insert(data.end(), memory.data().begin(), memory.data().end());
+        std::string failure;
+        if (!write_state_file(path, data, failure)) std::cerr << "[state] automatic state not written: " << failure << "\n";
+    });
     return true;
 }
 
 bool load_state(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, int slot, std::string &error) {
+    g_state_file_writer.wait();  // an automatic state may still be on its way to disk
     const std::filesystem::path path = state_file(slot);
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -1177,6 +1222,55 @@ void state_selftest_files(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ct
     file_table.directories.erase(dir_fd);
 }
 
+std::string state_toast_name(int slot) {
+    return slot >= kStateManualSlots ? "AUTO " + std::to_string(slot - kStateManualSlots + 1) : "SLOT " + std::to_string(slot + 1);
+}
+
+std::chrono::steady_clock::time_point g_state_auto_last = std::chrono::steady_clock::now();
+
+// Only while the player is playing: not in the main menu, a pause menu, the settings or the list of saves (the game
+// is waiting for a choice there), and not during a movie (save_state refuses that).
+bool state_auto_allowed() {
+    return !frontend_menu_active() && !lcs_menu_active() && !host_settings_open() && !save_slots_open() &&
+           !pause_menu_visible() && lcs_camera_in_use();
+}
+
+// Every Display.AutoStateMinutes of play (LCS_TEST_STATE_AUTO_SECONDS in tests), the oldest automatic slot is replaced.
+void state_auto_poll(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+    static const char *const test_seconds = std::getenv("LCS_TEST_STATE_AUTO_SECONDS");
+    const double interval = test_seconds != nullptr ? std::atof(test_seconds)
+                                                    : 60.0 * lcs_render_configuration().display.auto_state_minutes;
+    if (interval <= 0.0 || g_state_request.load() != 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now - g_state_auto_last).count() < interval) return;
+    if (!state_auto_allowed()) return;  // tried again at the next tick
+    int slot = kStateManualSlots;
+    std::filesystem::file_time_type oldest = std::filesystem::file_time_type::max();
+    for (int candidate = kStateManualSlots; candidate < kStateSlotCount; ++candidate) {
+        std::error_code ec;
+        const auto time = std::filesystem::last_write_time(state_file(candidate), ec);
+        if (ec) {  // an empty slot first
+            slot = candidate;
+            break;
+        }
+        if (time < oldest) {
+            oldest = time;
+            slot = candidate;
+        }
+    }
+    std::string error;
+    const auto started = std::chrono::steady_clock::now();
+    if (save_state(rt, ctx, slot, error, true)) {
+        g_state_auto_last = now;
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+        std::cerr << "[state] automatic state " << (slot - kStateManualSlots + 1) << " in " << ms << " ms\n";
+    } else {
+        g_state_auto_last = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                      std::chrono::duration<double>(std::max(0.0, interval - 30.0)));  // again in 30 s
+        std::cerr << "[state] automatic state skipped: " << error << "\n";
+    }
+}
+
 // Called at the top of the periodic outer-loop hook: the runtime is in control and no host call stack is live.
 void state_poll(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
     static bool selftest_done = std::getenv("LCS_TEST_STATE_SELFTEST") == nullptr;
@@ -1216,6 +1310,7 @@ void state_poll(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             g_state_request.store(-1);
         }
     }
+    state_auto_poll(rt, ctx);
     const int request = g_state_request.exchange(0);
     if (request == 0) return;
     const int slot = (request > 0 ? request : -request) - 1;
@@ -1225,10 +1320,11 @@ void state_poll(psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     {
         char text[40];
-        if (ok) std::snprintf(text, sizeof text, "%s SLOT %d", request > 0 ? "SAVED" : "LOADED", slot + 1);
+        if (ok) std::snprintf(text, sizeof text, "%s %s", request > 0 ? "SAVED" : "LOADED", state_toast_name(slot).c_str());
         else std::snprintf(text, sizeof text, "%s", request > 0 ? "CANNOT SAVE NOW" : "CANNOT LOAD");
         host_toast(text);
     }
+    if (ok && request < 0) g_state_auto_last = std::chrono::steady_clock::now();  // a full interval before the next
     if (ok) std::cerr << "[state] " << (request > 0 ? "saved" : "loaded") << " slot " << (slot + 1) << " in " << ms << " ms ("
                       << file_table.files.size() << " files, " << file_table.directories.size() << " folders, "
                       << file_table.virtual_disc_handles.size() << " disc handles open)\n";

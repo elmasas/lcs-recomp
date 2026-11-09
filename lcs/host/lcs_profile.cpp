@@ -20,6 +20,7 @@
 #include "lcs_fps_overlay.hpp"
 #include "lcs_frame_limit.hpp"
 #include "lcs_lang.hpp"
+#include "lcs_controls.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
@@ -1960,7 +1961,7 @@ void lcs_state_request_save(int slot) noexcept { g_state_request.store(slot + 1)
 void lcs_state_request_load(int slot) noexcept { g_state_request.store(-(slot + 1)); }
 
 namespace {
-constexpr int kStateSlots = 5;
+constexpr int kStateSlots = kStateManualSlots;  // what F6 cycles through
 std::atomic<int> g_state_slot{0};
 
 bool state_hotkey_allowed() noexcept {
@@ -1972,10 +1973,29 @@ bool state_hotkey_allowed() noexcept {
 }
 }  // namespace
 
+StateSlotInfo lcs_state_slot_info(int slot) noexcept {
+    StateSlotInfo info;
+    if (slot < 0 || slot >= kStateSlotCount) return info;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(state_file(slot), ec);
+    if (ec) return info;
+    info.used = true;
+    info.saved_unix = std::chrono::duration_cast<std::chrono::seconds>(
+                          std::chrono::clock_cast<std::chrono::system_clock>(time).time_since_epoch())
+                          .count();
+    return info;
+}
+
+std::string lcs_state_slot_label(int slot) {
+    return slot >= kStateManualSlots ? "Auto " + std::to_string(slot - kStateManualSlots + 1)
+                                     : "Slot " + std::to_string(slot + 1);
+}
+
+// The newest state of all, the automatic ones included (the main menu's Load State).
 int lcs_state_latest_slot() noexcept {
     int best = -1;
     std::filesystem::file_time_type best_time{};
-    for (int slot = 0; slot < kStateSlots; ++slot) {
+    for (int slot = 0; slot < kStateSlotCount; ++slot) {
         std::error_code ec;
         const auto time = std::filesystem::last_write_time(state_file(slot), ec);
         if (ec) continue;
@@ -1984,7 +2004,7 @@ int lcs_state_latest_slot() noexcept {
             best_time = time;
         }
     }
-    if (best >= 0) g_state_slot.store(best);
+    if (best >= 0 && best < kStateSlots) g_state_slot.store(best);
     return best;
 }
 

@@ -58,6 +58,8 @@ struct DisplayConfiguration {
     bool skip_main_menu{false};
     std::string menu_art{"random"};
     std::string menu_art_quality{"auto"};
+    // Minutes between automatic save states (lcs_state.hpp); 0 turns them off.
+    std::uint32_t auto_state_minutes{5u};
     std::string menu_music{"intro"};
     bool gps{true};
     bool classic_pause{false};

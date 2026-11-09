@@ -562,6 +562,16 @@ void register_settings() {
     settings::add(s);
 
     s = {};
+    s.key = "display.AutoStateMinutes"; s.page = "Game"; s.section = "Save states"; s.label = "Automatic state";
+    s.help = "Saves a state every few minutes into Auto 1-3, replacing the oldest. The pause menu's States page loads them.";
+    s.type = Type::Choice; s.defaultValue = 5;
+    s.choices = {{"Off", 0}, {"Every 2 minutes", 2}, {"Every 5 minutes", 5}, {"Every 10 minutes", 10}, {"Every 15 minutes", 15}};
+    s.read = [] { return static_cast<int>(config().display.auto_state_minutes); };
+    s.persist = [](int v) { host_settings_write("display", "AutoStateMinutes", std::to_string(v)); };
+    s.onChange = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.auto_state_minutes = static_cast<std::uint32_t>(v); }); };
+    settings::add(s);
+
+    s = {};
     s.key = "display.GpsWidth"; s.page = "Game"; s.section = "GPS"; s.label = "GPS line width";
     s.help = "How thick the line is."; s.type = Type::Integer; s.min = 1; s.max = 6; s.defaultValue = 2;
     s.read = [] { return static_cast<int>(config().display.gps_width); };

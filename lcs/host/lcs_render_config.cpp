@@ -221,6 +221,11 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Display.Gps must be true or false");
         return;
     }
+    if (key == "autostateminutes") {
+        if (!parse_u32(value, 0u, 60u, config.display.auto_state_minutes))
+            warning(config, line, "Display.AutoStateMinutes must be 0 (off) to 60");
+        return;
+    }
     if (key == "gpswidth") {
         if (!parse_u32(value, 1u, 6u, config.display.gps_width))
             warning(config, line, "Display.GpsWidth must be 1 to 6");

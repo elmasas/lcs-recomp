@@ -47,6 +47,8 @@ public:
     }
 
     [[nodiscard]] const std::vector<std::uint8_t> &data() const noexcept { return data_; }
+    // The bytes, moved out (for writing the file on another thread).
+    [[nodiscard]] std::vector<std::uint8_t> take() noexcept { return std::move(data_); }
     [[nodiscard]] std::size_t size() const noexcept { return data_.size(); }
 
 private:
