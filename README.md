@@ -81,7 +81,18 @@ Most of the trainer comes from [CheatDevice Remastered](https://github.com/Freak
 
 ## Texture packs
 
-PPSSPP texture packs work, and none is included. Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then choose it under F10, Graphics, Texture pack. It applies at once.
+PPSSPP texture packs work. None is included: packs are made from the game's own art, so, like the game, you get them yourself, from their authors.
+
+Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then choose it under F10, Graphics, Texture pack. It applies at once. A second pack fills in what the first doesn't replace: F10, Graphics, Second texture pack.
+
+Tested together, both made for the European version (ULES00151):
+
+| Pack | Authors | Choose it as |
+| --- | --- | --- |
+| [GTA LCS HD+ Interface v2.1](https://libertycity.net/files/gta-liberty-city-stories/244100-gta-lcs-hd-interface-v2-1.html) | SonofUgly, Sorux, MisaelVieira93, djdarko, Flentric | Texture pack: the HUD, menus and text. It comes in 128 and 256 sizes; 256 suits PC resolutions. |
+| [GTA LCS Ultimate HD Project v2.3](https://es.libertycity.net/files/gta-liberty-city-stories/193958-gta-liberty-city-stories-ultimate-hd-project-for-ppsspp.html) | MisaelVieira93, Sorux, djdarko | Second texture pack: the world, vehicles, effects. |
+
+Their large images (4096 by 4096) are put on the graphics card while the game starts, so that the first time one shows doesn't stall a frame. Together the two packs use about 1 GB of memory and 0.7 GB more of video memory.
 
 A pack made for another region may match only partly: a texture it doesn't match stays as it is. Hash types `xxh64`, `xxh32` and `quick` are supported.
 
@@ -122,10 +133,11 @@ takes the same action names.
 | `WeaponPrevious` | Q, Left, wheel up | Previous weapon. In a vehicle, previous radio station. |
 | `WeaponNext` | E, Right, wheel down | Next weapon. In a vehicle, next radio station. |
 | `Up` | Up | Toggle a special mission. In a vehicle, also pitches up. |
-| `Down` | Down | D-pad down. In a vehicle, horn and pitch down. |
+| `Down` | Down | D-pad down. In a vehicle, pitch down (a wheelie on a bike). |
 | `Pause` | Escape | Pause. |
 | `Camera` | V | Change camera. |
 | `Handbrake` | Space | Handbrake in a vehicle. |
+| `Horn` | G | Horn in a vehicle. |
 
 Controller names follow the Xbox layout. On a PlayStation pad, A is
 Cross, B is Circle, X is Square, and Y is Triangle. `LeftStick` and
@@ -196,7 +208,9 @@ That way you will get a pre-confugred build environment which also utilzes [ccac
 
 ## License
 
-GPL-3.0, see [`LICENSE`](LICENSE), because this fork includes GPL-3.0 code: from VCS Recomp and CheatDevice Remastered ([`lcs/VCS_IMPORT.md`](lcs/VCS_IMPORT.md)) and xBRZ. The original project is MIT, see [`LICENSE.MIT`](LICENSE.MIT). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
+GPL-3.0, see [`LICENSE`](LICENSE). This is the one license for the project as a whole: it includes GPL-3.0 code from VCS Recomp and CheatDevice Remastered ([`lcs/VCS_IMPORT.md`](lcs/VCS_IMPORT.md)) and xBRZ, so it is distributed under the GPL.
+
+The code this project started from, PSPRecomp, is MIT. The MIT license lets it be included in a GPL project, on the condition that its notice stays with it: that notice is in [`licenses/PSPRecomp-MIT.txt`](licenses/PSPRecomp-MIT.txt). It is not a second license to choose. Other third-party notices are in [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
 
 ## Unattended engine stress test
 

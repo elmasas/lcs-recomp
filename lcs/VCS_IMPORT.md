@@ -1,7 +1,7 @@
 # Code taken from VCS Recomp
 
 This fork is distributed under GPL-3.0 (`LICENSE`) because it includes code from VCS Recomp. The code it started from
-is MIT, and that notice stays in `LICENSE.MIT`.
+is MIT, and that notice stays in `licenses/PSPRecomp-MIT.txt`.
 
 Source: `gothamor/gta-vcs-recomp`, version 0.2.3, commit `ecf150e53f87e4656dfe81eacd922839d952b282` (GPL-3.0).
 

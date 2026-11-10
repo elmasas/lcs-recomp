@@ -1,5 +1,6 @@
 # Third-party notices
 
+- PSPRecomp, the code this project started from: MIT, see `../licenses/PSPRecomp-MIT.txt`.
 - FFmpeg: LGPL 2.1 or later, see `third_party/ffmpeg/COPYING.LGPLv2.1`.
 - VCS Recomp: GPL-3.0, see `VCS_IMPORT.md`.
 - Dear ImGui: MIT, see `third_party/imgui/LICENSE.txt`.
