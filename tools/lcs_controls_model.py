@@ -21,7 +21,7 @@ MAX_PER_BINDING = 4  # kMaxKeysPerAction
 ACTIONS = (
     "MoveForward", "MoveBack", "MoveLeft", "MoveRight", "Walk", "Sprint",
     "Jump", "EnterVehicle", "Attack", "Aim", "CenterCamera",
-    "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake", "RadioWheel", "WeaponWheel",
+    "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake", "Horn", "RadioWheel", "WeaponWheel",
 )
 
 # English UI labels: action name, on foot, in vehicle.
@@ -40,10 +40,11 @@ ACTION_LABELS = {
     "WeaponPrevious": ("Previous weapon", "weapon", "radio"),
     "WeaponNext": ("Next weapon", "weapon", "radio"),
     "Up": ("Up", "side mission", "pitch up"),
-    "Down": ("Down", "horn cue", "horn, pitch down"),
+    "Down": ("Down", "horn cue", "pitch down"),
     "Pause": ("Pause", "pause", "pause"),
     "Camera": ("Change camera", "camera", "camera"),
     "Handbrake": ("Handbrake", "—", "handbrake"),
+    "Horn": ("Horn", "—", "horn"),
     "RadioWheel": ("Radio wheel", "—", "radio wheel: hold, point, release"),
     "WeaponWheel": ("Weapon wheel", "weapon wheel: hold, point, release", "—"),
 }
@@ -108,6 +109,7 @@ DEFAULT_KEYS = {
     "Pause": ["Escape"],
     "Camera": ["V"],
     "Handbrake": ["Space"],
+    "Horn": ["G"],
     "RadioWheel": ["Q"],
     "WeaponWheel": ["Tab"],
 }

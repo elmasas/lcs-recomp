@@ -120,6 +120,14 @@ int bindings() {
     if (!binding_has(defaults, BindAction::Sprint, HostKey::Space)) return fail("default sprint");
     if (!binding_has(defaults, BindAction::Aim, HostKey::MouseRight)) return fail("default aim");
     if (!binding_has(defaults, BindAction::Handbrake, HostKey::Space)) return fail("default handbrake");
+    {   // In a vehicle the Down key pitches without the horn (d-pad down), and Horn sounds it.
+        const auto held = [](HostKey wanted) { return [wanted](HostKey key) { return key == wanted; }; };
+        const KeyboardSample down = sample_keyboard(defaults, true, held(HostKey::Down));
+        if (down.move_y <= 0 || (down.buttons & kPspDown) != 0) return fail("down in a vehicle");
+        if ((sample_keyboard(defaults, true, held(HostKey::G)).buttons & kPspDown) == 0) return fail("horn");
+        if ((sample_keyboard(defaults, false, held(HostKey::Down)).buttons & kPspDown) == 0) return fail("down on foot");
+        if (sample_keyboard(defaults, false, held(HostKey::G)).buttons != 0u) return fail("horn on foot");
+    }
     if (binding_wheel_buttons(defaults, true, false) != kPspLeft) return fail("wheel up");
     if (binding_wheel_buttons(defaults, false, true) != kPspRight) return fail("wheel down");
 
