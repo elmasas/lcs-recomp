@@ -3087,7 +3087,10 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             rt.memory().store32(stat_address + 0x08u, static_cast<std::uint32_t>(size));
             rt.memory().store32(stat_address + 0x0Cu, static_cast<std::uint32_t>(size >> 32u));
             const auto written = std::filesystem::last_write_time(native, error);
-            const auto system_time = std::chrono::clock_cast<std::chrono::system_clock>(written);
+            // libc++ has no std::chrono::clock_cast; convert via the clocks' now().
+            const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                written - std::filesystem::file_time_type::clock::now()
+                + std::chrono::system_clock::now());
             const std::time_t seconds = std::chrono::system_clock::to_time_t(system_time);
             std::tm parts{};
 #if defined(_WIN32)
