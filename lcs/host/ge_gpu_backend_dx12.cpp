@@ -259,6 +259,16 @@ struct Dx12Texture {
     std::shared_ptr<const std::vector<std::byte>> pixels;
 };
 
+// A large texture pack image, put on the graphics card a slice per frame before the game first shows it. A texture
+// that shows it takes this image instead of uploading its own.
+struct Dx12PreloadedTexture {
+    std::shared_ptr<const lcs::TexturePackImage> image;
+    ComPtr<ID3D12Resource> resource;
+    std::shared_ptr<Dx12TexturePlacement> placement;
+    std::uint32_t rows_done{};
+    bool ready{};
+};
+
 struct Dx12FramebufferTarget {
     std::uint32_t address{};
     std::uint32_t logical_width{};
@@ -344,6 +354,9 @@ struct Dx12GeState {
     std::uint64_t last_texture_lookup_key{};
     Dx12Texture *last_texture_lookup{};
     std::vector<std::uint64_t> pending_texture_keys;
+    std::vector<Dx12PreloadedTexture> preloads;
+    std::uint32_t preload_generation{0xFFFFFFFFu};
+    bool preload_logged{};
     std::vector<std::uint32_t> free_texture_srvs;
     std::vector<Dx12RetiredSrv> retired_texture_srvs;
     std::unordered_map<std::uint64_t, std::uint32_t> sampler_cache;
@@ -2409,11 +2422,24 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
     texture.checksum = checksum;
     texture.signature_epoch = s.frame_epoch;
     texture.last_used_epoch = s.frame_epoch;
+    bool preloaded = false;
+    if (mip_levels == 1u) {
+        for (const Dx12PreloadedTexture &preload : s.preloads) {
+            if (preload.ready && &preload.image->rgba8 == pixels.get()) {
+                texture.image = preload.resource;
+                texture.placement = preload.placement;
+                preloaded = true;
+                break;
+            }
+        }
+    }
     texture.pixels = std::move(pixels);
-    HRESULT hr = create_texture_image(s, desc, texture);
-    if (FAILED(hr)) return false;
+    if (!preloaded) {
+        HRESULT hr = create_texture_image(s, desc, texture);
+        if (FAILED(hr)) return false;
+        perf::add(perf::kTexKb, texture.pixels->size() / 1024u);
+    }
     perf::add(perf::kTexNew);
-    perf::add(perf::kTexKb, texture.pixels->size() / 1024u);
 
     texture.srv_index = allocate_texture_srv(s);
     if (texture.srv_index == 0u) return false;
@@ -2425,9 +2451,97 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
     srv.Texture2D.MipLevels = mip_levels;
     s.device->CreateShaderResourceView(texture.image.Get(), &srv, srv_cpu(s, texture.srv_index));
     s.texture_cache_bytes += texture.pixels->size();
-    s.pending_texture_keys.push_back(key);
+    if (!preloaded) s.pending_texture_keys.push_back(key);
     s.textures.emplace(key, std::move(texture));
     return true;
+}
+
+// Texture pack images of 32 MB or more go to the graphics card ahead of their first use, 8 MB a frame from the frame's
+// upload ring, so that none costs a frame of its own when the game first shows it (a 64 MB upload took over 100 ms).
+void record_texture_preloads(Dx12GeState &s, Dx12FrameResources &frame) noexcept {
+    constexpr std::size_t kMinBytes = 32u << 20u;
+    constexpr UINT64 kSliceBytes = 8u << 20u;
+    const std::uint32_t generation = lcs::texture_pack_generation();
+    if (generation != s.preload_generation) {
+        if (lcs::texture_pack_decoded_bytes() == 0u) return;  // not decoded yet
+        for (Dx12PreloadedTexture &old : s.preloads) {  // another pack: free them once the GPU is done
+            for (Dx12FrameResources &retire : s.frames) {
+                if (old.resource) retire.transient_resources.push_back(old.resource);
+                if (old.placement) retire.transient_placements.push_back(old.placement);
+            }
+        }
+        s.preloads.clear();
+        s.preload_generation = generation;
+        s.preload_logged = false;
+        for (auto &image : lcs::texture_pack_large_images(kMinBytes)) {
+            Dx12PreloadedTexture preload{};
+            preload.image = std::move(image);
+            s.preloads.push_back(std::move(preload));
+        }
+    }
+    if (!s.texture_upload_ring_enabled || !frame.texture_upload_buffer || !frame.mapped_texture_upload) return;
+    for (Dx12PreloadedTexture &preload : s.preloads) {
+        if (preload.ready) continue;
+        const std::uint32_t width = preload.image->width, height = preload.image->height;
+        if (!preload.resource) {
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            desc.Width = width;
+            desc.Height = height;
+            desc.DepthOrArraySize = 1u;
+            desc.MipLevels = 1u;
+            desc.Format = kColorFormat;
+            desc.SampleDesc.Count = 1u;
+            desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+            Dx12Texture holder{};
+            if (FAILED(create_texture_image(s, desc, holder))) {
+                preload.ready = true;  // left to the normal upload
+                preload.image = std::make_shared<const lcs::TexturePackImage>();
+                return;
+            }
+            preload.resource = holder.image;
+            preload.placement = holder.placement;
+            return;  // creating it is this frame's share
+        }
+        const UINT64 row_pitch = (static_cast<UINT64>(width) * 4u + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) &
+                                 ~static_cast<UINT64>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);
+        const UINT64 offset = (static_cast<UINT64>(frame.texture_upload_cursor) + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1u) &
+                              ~static_cast<UINT64>(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1u);
+        if (offset >= kTextureUploadCapacity) return;
+        const UINT64 room = std::min<UINT64>(kSliceBytes, kTextureUploadCapacity - offset);
+        const std::uint32_t rows = static_cast<std::uint32_t>(std::min<UINT64>(height - preload.rows_done, room / row_pitch));
+        if (rows == 0u) return;
+        const std::size_t row_bytes = static_cast<std::size_t>(width) * 4u;
+        for (std::uint32_t y = 0u; y < rows; ++y)
+            std::memcpy(frame.mapped_texture_upload + offset + y * row_pitch,
+                        preload.image->rgba8.data() + static_cast<std::size_t>(preload.rows_done + y) * row_bytes, row_bytes);
+        frame.texture_upload_cursor = static_cast<std::size_t>(offset + rows * row_pitch);
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = preload.resource.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = 0u;
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = frame.texture_upload_buffer.Get();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint.Offset = offset;
+        src.PlacedFootprint.Footprint.Format = kColorFormat;
+        src.PlacedFootprint.Footprint.Width = width;
+        src.PlacedFootprint.Footprint.Height = rows;
+        src.PlacedFootprint.Footprint.Depth = 1u;
+        src.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(row_pitch);
+        s.list->CopyTextureRegion(&dst, 0u, preload.rows_done, 0u, &src, nullptr);
+        preload.rows_done += rows;
+        if (preload.rows_done == height) {
+            transition(s.list.Get(), preload.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            preload.ready = true;
+        }
+        return;  // one slice a frame
+    }
+    if (!s.preload_logged && !s.preloads.empty()) {
+        s.preload_logged = true;
+        std::cerr << "[texture-cache] " << s.preloads.size() << " large pack images on the graphics card ahead of use" << std::endl;
+    }
 }
 
 void record_pending_texture_uploads(Dx12GeState &s, Dx12FrameResources &frame) noexcept {
@@ -3409,6 +3523,7 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
         return false;
     }
 
+    record_texture_preloads(s, frame);
     record_pending_texture_uploads(s, frame);
 
     const D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(s.target_width),

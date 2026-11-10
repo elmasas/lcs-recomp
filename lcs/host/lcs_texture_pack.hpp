@@ -37,6 +37,10 @@ void texture_pack_select_second(int index);
 // The chosen packs' images once decoded, in bytes; 0 before that. The renderer's texture cache makes room for them.
 [[nodiscard]] std::uint64_t texture_pack_decoded_bytes() noexcept;
 
+// The chosen packs' images of at least min_bytes, once all are decoded (empty before that). The renderer puts them on
+// the graphics card ahead of their first use: a 4096x4096 image is 64 MB, too much to upload in one frame.
+[[nodiscard]] std::vector<std::shared_ptr<const TexturePackImage>> texture_pack_large_images(std::size_t min_bytes);
+
 // The pack's image for pixel data outside a draw, whatever its palette (xxh64 and xxh32 packs).
 [[nodiscard]] std::shared_ptr<const TexturePackImage> texture_pack_find_data(const std::uint8_t *data, std::size_t size);
 [[nodiscard]] std::shared_ptr<const TexturePackImage> texture_pack_find_hash(std::uint32_t data_key);

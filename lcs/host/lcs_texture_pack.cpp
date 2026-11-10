@@ -348,6 +348,24 @@ std::uint32_t texture_pack_generation() noexcept {
     return g_generation.load(std::memory_order_relaxed);
 }
 
+std::vector<std::shared_ptr<const TexturePackImage>> texture_pack_large_images(std::size_t min_bytes) {
+    std::vector<std::shared_ptr<const TexturePackImage>> images;
+    if (g_decoded_bytes.load(std::memory_order_relaxed) == 0u) return images;
+    std::shared_ptr<const Pack> pack;
+    {
+        std::lock_guard lock(g_mutex);
+        pack = g_pack;
+    }
+    if (pack == nullptr) return images;
+    for (const auto &file : pack->files) {
+        auto image = decode(*file);  // already decoded: only waits on its once_flag
+        if (image != nullptr && image->rgba8.size() >= min_bytes &&
+            std::find(images.begin(), images.end(), image) == images.end())
+            images.push_back(std::move(image));
+    }
+    return images;
+}
+
 std::uint64_t texture_pack_decoded_bytes() noexcept {
     return g_decoded_bytes.load(std::memory_order_relaxed);
 }
