@@ -1,5 +1,6 @@
 #include "lcs_controls.hpp"
 #include "lcs_free_aim.hpp"
+#include "lcs_free_aim_trace.hpp"
 #include "lcs_mouse.hpp"
 #include "lcs_frame_limit.hpp"
 
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cmath>
 #include <cstdlib>
 #include <chrono>
@@ -161,6 +163,31 @@ bool lcs_auto_aim() noexcept {
 
 bool lcs_free_aim_weapon(std::uint32_t weapon_type) noexcept {
     return !lcs_auto_aim() && ((weapon_type >= 17u && weapon_type <= 27u) || (weapon_type >= 31u && weapon_type <= 33u));
+}
+
+namespace {
+struct FreeAimShot {
+    float gun[3]{};
+    float ray_start[3]{};
+    bool noted{};
+};
+FreeAimShot g_free_aim_shot;  // game thread only
+}  // namespace
+
+void lcs_free_aim_note_shot(const float (&gun)[3], const float (&ray_start)[3]) noexcept {
+    for (int i = 0; i < 3; ++i) {
+        g_free_aim_shot.gun[i] = gun[i];
+        g_free_aim_shot.ray_start[i] = ray_start[i];
+    }
+    g_free_aim_shot.noted = true;
+}
+
+bool lcs_free_aim_trace_from_gun(const float (&start)[3], float (&gun)[3]) noexcept {
+    if (!g_free_aim_shot.noted) return false;
+    for (int i = 0; i < 3; ++i)
+        if (std::bit_cast<std::uint32_t>(start[i]) != std::bit_cast<std::uint32_t>(g_free_aim_shot.ray_start[i])) return false;
+    for (int i = 0; i < 3; ++i) gun[i] = g_free_aim_shot.gun[i];
+    return true;
 }
 
 void lcs_set_free_aim(bool active) noexcept { g_free_aim.store(active, std::memory_order_relaxed); }

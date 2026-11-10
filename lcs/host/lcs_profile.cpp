@@ -1687,6 +1687,30 @@ double wall_clock_limit_seconds = 0.0;
 std::chrono::steady_clock::time_point wall_clock_start;
 
 // Where the player is, for the metrics (US 1.05, as the stress test reads it: FindPlayerCoors' matrix at +48).
+// LCS_TEST_AIM_STATE=<file> (tests only): each pad sample, the time, the pad, the player ped's first 4 KB and the active
+// camera's 656 bytes, for comparing the game's own aiming with free aim field by field.
+void dump_aim_state(psprecomp::Runtime &rt, std::uint32_t buttons, std::uint8_t analog_x, std::uint8_t analog_y) {
+    static std::FILE *const file = [] {
+        const char *path = std::getenv("LCS_TEST_AIM_STATE");
+        return path != nullptr ? std::fopen(path, "wb") : nullptr;
+    }();
+    if (file == nullptr) return;
+    auto &memory = rt.memory();
+    const auto slot = memory.load8(0x08B5E054u);
+    if (slot > 1u) return;
+    const std::uint32_t ped = memory.load32(0x08B89A10u + slot * 368u);
+    const std::uint32_t camera = 0x08B832A0u + 400u + memory.load8(0x08B832A0u + 127u) * 656u;
+    if (ped == 0u || !memory.contains(ped, 4096u) || !memory.contains(camera, 656u)) return;
+    static const auto start = std::chrono::steady_clock::now();
+    const float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+    const std::uint32_t head[4] = {std::bit_cast<std::uint32_t>(t), buttons, (static_cast<std::uint32_t>(analog_x) << 8u) | analog_y, ped};
+    std::fwrite(head, sizeof head, 1u, file);
+    std::fwrite(memory.raw_pointer(ped, 4096u), 1u, 4096u, file);
+    std::fwrite(memory.raw_pointer(camera, 656u), 1u, 656u, file);
+    static unsigned count = 0u;
+    if (++count % 60u == 0u) std::fflush(file);
+}
+
 void note_player_for_metrics(psprecomp::Runtime &rt) {
     auto &memory = rt.memory();
     const auto slot = memory.load8(0x08B5E054u);
@@ -3400,6 +3424,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             buttons = radio_wheel_game_tick(rt, buttons);
             buttons = weapon_wheel_game_tick(rt, buttons);
             if (perf::g_enabled) note_player_for_metrics(rt);
+            dump_aim_state(rt, buttons, analog_x, analog_y);
             // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.
             static bool slots_held = false;
             if (save_slots_open()) slots_held = true;

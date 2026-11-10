@@ -1,4 +1,5 @@
 #include "lcs_controls.hpp"
+#include "lcs_free_aim_trace.hpp"
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
 #include <bit>
@@ -183,6 +184,9 @@ static void crosshair_shot(Runtime &rt, AllegrexContext &ctx, GuestMemory::AotFa
                      std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + 100u)),
                      std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + 104u)), source[0], source[1], source[2],
                      far_point[0], far_point[1], far_point[2]);
+    float gun[3];
+    for (std::uint32_t i = 0; i < 3u; ++i) gun[i] = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[29] + 96u + i * 4u));
+    lcs::lcs_free_aim_note_shot(gun, source);  // its trace starts at the gun (unit 0008)
     for (std::uint32_t i = 0; i < 3u; ++i) {
         aot_mem.aot_store32(ctx.gpr[29] + 96u + i * 4u, std::bit_cast<std::uint32_t>(source[i]));
         aot_mem.aot_store32(ctx.gpr[29] + 80u + i * 4u, std::bit_cast<std::uint32_t>(far_point[i]));
