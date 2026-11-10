@@ -39,6 +39,7 @@ enum Counter : std::size_t {
     kVblanks,          // presents attempted
     kSkippedVblanks,   // vblanks the throttle skipped because it was behind
     kSkippedPresents,  // vblanks with a present still pending on the GE worker
+    kGameUs,           // game thread: running the game between vblank waits (idle_wait included)
     kCounterCount,
 };
 
@@ -72,6 +73,10 @@ void shutdown();
 // One row per new image shown. Called by the thread that presents.
 void frame() noexcept;
 void set_position(float x, float y) noexcept;
+// Game thread, each pad sample: where the player is, and whether in a vehicle or a menu.
+void set_player(float x, float y, float z, bool vehicle, bool menu) noexcept;
+// The player's stutter key: the next row gets mark=1. False when the log is off.
+bool mark() noexcept;
 void set_coronas(std::uint32_t active) noexcept;
 
 }  // namespace lcs::perf

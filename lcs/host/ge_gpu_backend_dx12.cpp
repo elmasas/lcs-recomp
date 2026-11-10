@@ -715,6 +715,7 @@ bool select_adapter(Dx12GeState &s, std::string &error) noexcept {
             const int count = WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1,
                                                    utf8, static_cast<int>(sizeof(utf8)), nullptr, nullptr);
             s.adapter_name = count > 0 ? utf8 : "Direct3D 12 adapter";
+            std::cerr << "[gpu] Direct3D 12 on " << s.adapter_name << " (" << (desc.DedicatedVideoMemory >> 20u) << " MB)\n";
             return true;
         }
     }

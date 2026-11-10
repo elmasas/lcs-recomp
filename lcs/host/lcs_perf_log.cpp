@@ -11,6 +11,14 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 namespace lcs::perf {
 
 bool g_enabled = false;
@@ -28,6 +36,11 @@ struct Row {
     float y{};
     float view_distance{};
     std::uint32_t coronas{};
+    float z{};
+    std::uint8_t vehicle{};
+    std::uint8_t menu{};
+    std::uint8_t mark{};
+    std::uint32_t mem_mb{};
 };
 
 std::FILE *g_file = nullptr;
@@ -41,13 +54,32 @@ Clock::time_point g_previous{};
 std::atomic<float> g_x{0.0f};
 std::atomic<float> g_y{0.0f};
 std::atomic<std::uint32_t> g_coronas{0u};
+std::atomic<float> g_z{0.0f};
+std::atomic<std::uint8_t> g_vehicle{0u};
+std::atomic<std::uint8_t> g_menu{0u};
+std::atomic<bool> g_mark{false};
+
+// Once a second: the process's working set, in MB, to see memory grow over a long session.
+std::uint32_t memory_mb(Clock::time_point now) noexcept {
+    static Clock::time_point last{};
+    static std::uint32_t value = 0u;
+    if (now - last < std::chrono::seconds(1)) return value;
+    last = now;
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+        value = static_cast<std::uint32_t>(counters.WorkingSetSize >> 20u);
+#endif
+    return value;
+}
 
 void write_rows(const std::vector<Row> &rows) {
     for (const Row &row : rows) {
         std::fprintf(g_file, "%.4f,%.3f", row.t, row.frame_ms);
         for (const std::uint64_t value : row.counters)
             std::fprintf(g_file, ",%llu", static_cast<unsigned long long>(value));
-        std::fprintf(g_file, ",%.1f,%.1f,%.2f,%u\n", row.x, row.y, row.view_distance, row.coronas);
+        std::fprintf(g_file, ",%.1f,%.1f,%.2f,%u,%.1f,%u,%u,%u,%u\n", row.x, row.y, row.view_distance, row.coronas, row.z,
+                     row.vehicle, row.menu, row.mark, row.mem_mb);
     }
     std::fflush(g_file);
 }
@@ -80,7 +112,8 @@ void init() {
     }
     std::fputs("t_s,frame_ms,ge_list_us,finish_frame_us,dxgi_present_us,fence_wait_us,idle_wait_us,throttle_us,"
                "tex_new,tex_same,tex_replaced,tex_evicted,tex_kb,tex_decode_us,tex_hash_us,pso_new,pso_us,"
-               "io_reads,io_kb,io_us,world_us,world_read_us,world_merge_us,world_cache_hits,world_sectors,lod_us,lod_drawn,vblanks,skipped_vblanks,skipped_presents,x,y,view_distance,coronas\n", g_file);
+               "io_reads,io_kb,io_us,world_us,world_read_us,world_merge_us,world_cache_hits,world_sectors,lod_us,lod_drawn,vblanks,skipped_vblanks,skipped_presents,game_us,x,y,view_distance,coronas,"
+               "z,vehicle,menu,mark,mem_mb\n", g_file);
     g_pending.reserve(1024u);
     g_start = g_previous = Clock::now();
     g_enabled = true;
@@ -123,6 +156,11 @@ void frame() noexcept {
     row.y = g_y.load(std::memory_order_relaxed);
     row.view_distance = view_distance_scale();
     row.coronas = g_coronas.load(std::memory_order_relaxed);
+    row.z = g_z.load(std::memory_order_relaxed);
+    row.vehicle = g_vehicle.load(std::memory_order_relaxed);
+    row.menu = g_menu.load(std::memory_order_relaxed);
+    row.mark = g_mark.exchange(false, std::memory_order_relaxed) ? 1u : 0u;
+    row.mem_mb = memory_mb(now);
     try {
         std::lock_guard lock(g_mutex);
         g_pending.push_back(row);
@@ -131,6 +169,21 @@ void frame() noexcept {
 }
 
 void set_coronas(std::uint32_t active) noexcept { g_coronas.store(active, std::memory_order_relaxed); }
+
+void set_player(float x, float y, float z, bool vehicle, bool menu) noexcept {
+    if (!g_enabled) return;
+    set_position(x, y);
+    g_z.store(z, std::memory_order_relaxed);
+    g_vehicle.store(vehicle ? 1u : 0u, std::memory_order_relaxed);
+    g_menu.store(menu ? 1u : 0u, std::memory_order_relaxed);
+}
+
+bool mark() noexcept {
+    if (!g_enabled) return false;
+    g_mark.store(true, std::memory_order_relaxed);
+    std::cerr << "[perf] mark at " << std::chrono::duration<double>(Clock::now() - g_start).count() << " s\n";
+    return true;
+}
 
 void set_position(float x, float y) noexcept {
     g_x.store(x, std::memory_order_relaxed);

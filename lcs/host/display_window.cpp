@@ -11,6 +11,7 @@
 #include "lcs_mouse.hpp"
 #include "lcs_controls.hpp"
 #include "lcs_display_menu.hpp"
+#include "lcs_perf_log.hpp"
 #include "lcs_imgui_menu.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_key_bindings.hpp"
@@ -681,6 +682,12 @@ HostInputState display_window_input() {
             if (f6 && !f6_was) lcs_state_hotkey_next_slot();
             if (f7 && !f7_was) lcs_state_hotkey_load();
             f5_was = f5; f6_was = f6; f7_was = f7;
+            // With metrics on: the Pause key marks a stutter the player felt, for the report. Away from F5-F7, so that it
+            // isn't pressed by mistake for a state key.
+            static bool mark_was = false;
+            const bool mark = test_keys.empty() && key_down(VK_PAUSE);
+            if (mark && !mark_was && perf::mark()) host_toast("Stutter marked");
+            mark_was = mark;
         }
         static MenuKeyFilter menu_keys;
         const bool game_menu = lcs_menu_active() || frontend_menu_active();

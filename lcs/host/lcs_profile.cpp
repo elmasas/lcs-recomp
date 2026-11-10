@@ -1686,9 +1686,38 @@ std::uint64_t starvation_tick_microseconds = 1u;
 double wall_clock_limit_seconds = 0.0;
 std::chrono::steady_clock::time_point wall_clock_start;
 
+// Where the player is, for the metrics (US 1.05, as the stress test reads it: FindPlayerCoors' matrix at +48).
+void note_player_for_metrics(psprecomp::Runtime &rt) {
+    auto &memory = rt.memory();
+    const auto slot = memory.load8(0x08B5E054u);
+    if (slot > 1u) return;
+    const auto ped = memory.load32(0x08B89A10u + slot * 368u);
+    if (ped == 0u || !memory.contains(ped, 1337u)) return;
+    const bool driving = memory.load8(ped + 1336u) != 0u;
+    const auto entity = driving ? memory.load32(ped + 1332u) : ped;
+    if (entity == 0u || !memory.contains(entity, 64u)) return;
+    float position[3]{};
+    for (unsigned i = 0; i < 3u; ++i) {
+        position[i] = std::bit_cast<float>(memory.load32(entity + 48u + i * 4u));
+        if (!std::isfinite(position[i]) || std::abs(position[i]) > 100000.0f) return;
+    }
+    perf::set_player(position[0], position[1], position[2], driving, lcs_menu_active() || frontend_menu_active());
+}
+
 std::uint32_t throttle_vblank_to_real_time() {
     static const bool uncapped = std::getenv("LCS_UNCAPPED") != nullptr;
     if (uncapped) return 0u;
+    // The metrics' game_us: from the end of one wait to the start of the next, the game thread's own work.
+    static std::chrono::steady_clock::time_point game_since{};
+    struct GameClock {
+        std::chrono::steady_clock::time_point &since;
+        explicit GameClock(std::chrono::steady_clock::time_point &s) : since(s) {
+            if (perf::g_enabled && since != std::chrono::steady_clock::time_point{})
+                perf::add(perf::kGameUs, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                                 std::chrono::steady_clock::now() - since).count()));
+        }
+        ~GameClock() { since = std::chrono::steady_clock::now(); }
+    } game_clock(game_since);
     constexpr std::uint32_t kMaxSkippedVblanks = 6u;
     static std::chrono::steady_clock::time_point next_vblank{};
     const auto period = std::chrono::microseconds(vblank_period_us());
@@ -3370,6 +3399,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             buttons = pause_menu_game_tick(rt, buttons);
             buttons = radio_wheel_game_tick(rt, buttons);
             buttons = weapon_wheel_game_tick(rt, buttons);
+            if (perf::g_enabled) note_player_for_metrics(rt);
             // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.
             static bool slots_held = false;
             if (save_slots_open()) slots_held = true;

@@ -453,6 +453,7 @@ void commit_audio_state(AudioPlain &&t) {
         m.audio.close();
     }
     mpeg_contexts.clear();
+    audio_output_restart_timeline();
     for (std::size_t i = 0u; i < audio_channels.size(); ++i) {
         audio_channels[i] = t.channels[i];
         audio_output_reset_channel(static_cast<std::uint32_t>(i));
