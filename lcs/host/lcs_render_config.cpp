@@ -2,6 +2,7 @@
 #include "lcs_widescreen.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cerrno>
@@ -297,6 +298,41 @@ void apply_rendering_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Rendering.TextureLodBias must be between -8 and 8");
         return;
     }
+    if (key == "lodlights") {
+        if (!parse_bool(value, config.rendering.lod_lights))
+            warning(config, line, "Rendering.LodLights expects true/false");
+        return;
+    }
+    if (key == "lodlightsrange") {
+        if (!parse_float(value, 100.0f, 4000.0f, config.rendering.lod_lights_range))
+            warning(config, line, "Rendering.LodLightsRange must be between 100 and 4000");
+        return;
+    }
+    if (key == "lamppatches") {
+        if (!parse_bool(value, config.rendering.lamp_patches))
+            warning(config, line, "Rendering.LampPatches must be true or false");
+        return;
+    }
+    if (key == "lamppatchrange") {
+        if (!parse_float(value, 100.0f, 2000.0f, config.rendering.lamp_patch_range))
+            warning(config, line, "Rendering.LampPatchRange must be 100 to 2000");
+        return;
+    }
+    if (key == "lamppoolrange") {
+        if (!parse_float(value, 10.0f, 1000.0f, config.rendering.lamp_pool_range))
+            warning(config, line, "Rendering.LampPoolRange must be 10 to 1000");
+        return;
+    }
+    if (key == "lodlightsradius") {
+        if (!parse_float(value, 0.01f, 10.0f, config.rendering.lod_lights_radius))
+            warning(config, line, "Rendering.LodLightsRadius must be between 0.01 and 10");
+        return;
+    }
+    if (key == "lodlightslimit") {
+        if (!parse_u32(value, 1u, 2048u, config.rendering.lod_lights_limit))
+            warning(config, line, "Rendering.LodLightsLimit must be between 1 and 2048");
+        return;
+    }
     if (key == "texturepack") {
         config.rendering.texture_pack = std::string(value);
         return;
@@ -530,6 +566,26 @@ float view_distance_scale() noexcept {
     const float scale = lcs_render_configuration().rendering.view_distance;
     if (!std::isfinite(scale)) return 1.0f;
     return std::clamp(scale, 1.0f, 4.0f);
+}
+
+namespace {
+std::atomic<bool> lod_lights_off{false};
+}
+
+void note_lod_lights_off() noexcept { lod_lights_off.store(true, std::memory_order_relaxed); }
+
+float lamp_pool_distance() noexcept { return lcs_render_configuration().rendering.lamp_pool_range; }
+
+float corona_distance_scale() noexcept {
+    static const bool enabled = [] {
+        const char *text = std::getenv("LCS_CORONA_DISTANCE");
+        return text == nullptr || *text != '0';
+    }();
+    // The distant lights take over from the game's coronas at a fixed fraction of their range, so it stays original
+    // while they draw. If they have turned themselves off, the coronas reach as far as the view distance again.
+    const bool lights_draw = lcs_render_configuration().rendering.lod_lights && !lod_lights_off.load(std::memory_order_relaxed);
+    if (!enabled || lights_draw) return 1.0f;
+    return view_distance_scale();
 }
 
 void lcs_set_view_distance(float value) noexcept {

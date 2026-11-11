@@ -61,6 +61,22 @@ Not read yet: entries tied to a memory address (keys not starting with `00000000
 
 `Rendering.TextureCacheEntries` and `Rendering.TextureCacheMB` set the size of the texture cache. Packs with large images, or long sessions, can use more than the defaults of 8192 and 256; if you have the memory to spare, 16384 and 512 avoid reloading textures.
 
+## Distant lights
+
+Street lamps and traffic lights stay lit far into the distance at night, drawn as coronas past where the game's own end, from the lamp positions in Project2DFX (see `lcs/CREDITS.md`). Lamps also light the ground further, and past that, faint patches of their colour stand in for the pools of light. Settings under `[Rendering]` in `LCSNative.ini`:
+
+| Setting | Values | Default | What it does |
+| --- | --- | --- | --- |
+| `LodLights` | `true`/`false` | `true` | The distant lights. |
+| `LodLightsRange` | 100 to 4000 | 500 | How far they reach. |
+| `LodLightsRadius` | 0.01 to 10 | 1.0 | Their size. |
+| `LodLightsLimit` | 1 to 2048 | 900 | How many draw at once, nearest first. |
+| `LampPoolRange` | 10 to 1000 | 120 | How far a lamp's pool of light on the ground shows (the game's is 40). |
+| `LampPatches` | `true`/`false` | `true` | The patches past the pools. |
+| `LampPatchRange` | 100 to 2000 | 450 | How far the patches reach. |
+
+With `LodLights` off, the game's own coronas reach as far as `Rendering.ViewDistance` instead; `LCS_CORONA_DISTANCE=0` keeps them at the game's distances.
+
 ## Mouse and keyboard
 
 Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A
