@@ -10,3 +10,4 @@
 /build/
 *.spec
 /lcs/config/textures/
+/lcs/scripts/__pycache__/

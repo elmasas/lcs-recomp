@@ -6536,6 +6536,9 @@ L_08956DD4:
     if (rt.invoke_chained_direct<&recomp_unit_0082_entry, 82u, 760u, 0x0894FE6Cu>(ctx, &aot_mem) && ctx.pc == 0x08956DE8u) goto L_08956DE8;
     return;
 L_08956DE8:
+    // The world's list of loaded chunks holds 32 (generated unit 0083, L_089514F8). Queue no more than it can take,
+    // counting what is loaded already: past that the loading sequence can't complete and starts over, forever.
+    if (aot_mem.aot_load32(ctx.gpr[16] + 256u) + aot_mem.aot_load32(ctx.gpr[20] + 0u) >= 32u) goto L_08956E04;
     ctx.gpr[4] = (aot_mem.aot_load32(ctx.gpr[18] + static_cast<std::uint32_t>(56)));
     ctx.gpr[5] = (aot_mem.aot_load32(ctx.gpr[20] + static_cast<std::uint32_t>(0)));
     ctx.gpr[6] = (ctx.gpr[5] << 2u);
@@ -6639,6 +6642,8 @@ L_08956E98:
       goto L_08956EA0;
     }
 L_08956EA0:
+    // The same limit for the sector's swap chunks, which the detailed world (view distance 2+) makes many more of.
+    if (aot_mem.aot_load32(ctx.gpr[16] + 256u) + aot_mem.aot_load32(ctx.gpr[17] + 0u) >= 32u) goto L_08956ECC;
     ctx.gpr[4] = (aot_mem.aot_load32(ctx.gpr[16] + static_cast<std::uint32_t>(16)));
     ctx.gpr[4] = (aot_mem.aot_load32(ctx.gpr[4] + static_cast<std::uint32_t>(4)));
     ctx.gpr[5] = (aot_mem.aot_load16(ctx.gpr[19] + static_cast<std::uint32_t>(2)));
