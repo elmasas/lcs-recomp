@@ -310,10 +310,22 @@ std::uint8_t GuestMemory::load8(std::uint32_t address) const {
     return region_bytes(r.region)[r.offset];
 }
 std::uint16_t GuestMemory::load16(std::uint32_t address) const {
+    // One check and one copy when both bytes are in one contiguous region (little-endian host, as the PSP); otherwise
+    // byte by byte, as before, so a read across a region's end behaves the same.
+    if (const std::uint8_t *raw = raw_pointer(address, 2u)) {
+        std::uint16_t value;
+        std::memcpy(&value, raw, sizeof value);
+        return value;
+    }
     return static_cast<std::uint16_t>(load8(address)) |
            static_cast<std::uint16_t>(static_cast<std::uint16_t>(load8(address + 1u)) << 8u);
 }
 std::uint32_t GuestMemory::load32(std::uint32_t address) const {
+    if (const std::uint8_t *raw = raw_pointer(address, 4u)) {  // see load16
+        std::uint32_t value;
+        std::memcpy(&value, raw, sizeof value);
+        return value;
+    }
     return static_cast<std::uint32_t>(load8(address)) |
            (static_cast<std::uint32_t>(load8(address + 1u)) << 8u) |
            (static_cast<std::uint32_t>(load8(address + 2u)) << 16u) |

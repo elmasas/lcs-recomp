@@ -8,4 +8,7 @@ namespace lcs {
 
 void precise_sleep_until(std::chrono::steady_clock::time_point deadline) noexcept;
 
+// The name the sampling profiler looks for (lcs/host/lcs_profiler.hpp).
+void set_host_thread_name(const wchar_t *name) noexcept;
+
 }

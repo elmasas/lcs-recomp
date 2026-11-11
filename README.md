@@ -30,6 +30,70 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## Performance log (Windows)
+
+`lcs\scripts\build_perf.bat` builds the optimised game, with ThinLTO, AVX2,
+and a PDB, into `out\lcs-perf`. `lcs\scripts\play_perf.bat` runs that binary.
+The PDB is what lets the sampling profiler print function names.
+
+Record one row per presented frame while you play:
+
+```text
+set LCS_PERF_LOG=perf.csv
+lcs\scripts\play_perf.bat
+```
+
+The game creates the file, or replaces it, at startup. The Pause/Break key
+marks a hitch you felt: that frame's `mark` column is 1. Escape pauses the
+game and does not mark the log.
+
+Summarise a finished log:
+
+```text
+python lcs\scripts\perf_report.py perf.csv
+python lcs\scripts\perf_report.py perf.csv --from 30 --to 120 --json report.json
+```
+
+`--from` and `--to` keep a range of `t_s`, in seconds. Frames at position 0,0
+are left out. Those are boot and menus, before the player has a position.
+`--all` keeps them. A hitch is a frame longer than both twice the median of
+the previous 60 frames and that median plus 8 ms. The report names the
+largest cost on that frame.
+
+A timed run uses copies of the saves, so the real saves and the real ini stay
+untouched. The output folder must not exist yet:
+
+```text
+python lcs\scripts\perf_run.py out\perf-portland --binary out\lcs-perf\lcs\LCSNative.exe --seconds 180 --route lcs\scripts\routes\portland.txt
+```
+
+That folder receives `perf.csv`, `runtime.log`, `runner.json`, `report.json`,
+and the ini used for the run. `--seconds` defaults to 180. The run is stopped
+if it is still going 60 seconds after that. `--route` moves the player along
+the file. Without `--route`, the run drives around. Repeat
+`--set Section.Key=Value` to change one ini setting for this run only.
+`--packs` uses texture packs in the game's `TEXTURES` folder. Extra
+`NAME=VALUE` arguments are environment variables for the game.
+
+Routes in `lcs\scripts\routes`: `portland.txt` is a low flight over Portland,
+`portland-city.txt` stays over the dense streets, and `portland-high.txt`
+stays above the tall buildings.
+
+The sampling profiler is separate from the frame log, and it needs the
+`build_perf.bat` binary:
+
+```text
+set LCS_PROFILE=5
+set LCS_PROFILE_SPIKES=20
+lcs\scripts\play_perf.bat
+```
+
+`LCS_PROFILE` is how often, in seconds, it prints the busiest functions in
+`GameThread` and `GeWorker`. `LCS_PROFILE_THREAD` replaces that list, as a
+comma-separated set of thread names. `LCS_PROFILE_SPIKES` is a frame time in
+milliseconds. A slower frame gets a short report. The lines are tagged
+`[profile]`.
+
 ## Mouse and keyboard
 
 Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A

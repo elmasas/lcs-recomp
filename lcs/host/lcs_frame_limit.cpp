@@ -14,6 +14,14 @@
 
 namespace lcs {
 
+void set_host_thread_name(const wchar_t *name) noexcept {
+#if defined(_WIN32)
+    SetThreadDescription(GetCurrentThread(), name);
+#else
+    (void)name;
+#endif
+}
+
 void precise_sleep_until(std::chrono::steady_clock::time_point deadline) noexcept {
 #if defined(_WIN32)
     thread_local HANDLE timer = CreateWaitableTimerExW(

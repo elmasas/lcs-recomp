@@ -4,6 +4,7 @@
 #include "lcs_menu.hpp"
 
 #include <array>
+#include <cstring>
 #include <string>
 
 namespace lcs {
@@ -19,6 +20,17 @@ bool ge_finish_seen = false;
 std::uint32_t ge_finish_arg = 0u;
 
 constexpr std::uint32_t kMaxCommands = 2'000'000u;
+
+// One command word: one check and a copy, as GuestMemory::load32 does; false where the list leaves guest memory.
+inline bool read_command(const psprecomp::GuestMemory &memory, std::uint32_t pc, std::uint32_t &word) {
+    if (const std::uint8_t *raw = memory.raw_pointer(pc, 4u)) {
+        std::memcpy(&word, raw, sizeof word);
+        return true;
+    }
+    if (!memory.contains(pc, 4u)) return false;
+    word = memory.load32(pc);
+    return true;
+}
 
 std::uint32_t relative_address(std::uint32_t data24) {
     const std::uint32_t extended = ((ge_base_register & 0x000F0000u) << 8u) | (data24 & 0x00FFFFFFu);
@@ -37,8 +49,8 @@ void execute_ge_list_rendered(psprecomp::GuestMemory &memory, std::uint32_t list
     std::uint32_t pc = list_address;
 
     for (std::uint32_t executed = 0u; executed < kMaxCommands; ++executed) {
-        if (!memory.contains(pc, 4u)) break;
-        const std::uint32_t word = memory.load32(pc);
+        std::uint32_t word;
+        if (!read_command(memory, pc, word)) break;
         const std::uint32_t op_pc = pc;
         pc = (pc + 4u) & 0x0FFFFFFFu;
         const std::uint32_t command = word >> 24u;
@@ -115,8 +127,8 @@ GeListPrescan prescan_ge_list(psprecomp::GuestMemory &memory, std::uint32_t list
     std::uint32_t call_depth = 0u;
     std::uint32_t pc = list_address;
     for (std::uint32_t executed = 0u; executed < kMaxCommands; ++executed) {
-        if (!memory.contains(pc, 4u)) break;
-        const std::uint32_t word = memory.load32(pc);
+        std::uint32_t word;
+        if (!read_command(memory, pc, word)) break;
         pc = (pc + 4u) & 0x0FFFFFFFu;
         const std::uint32_t command = word >> 24u;
         const std::uint32_t data = word & 0x00FFFFFFu;
