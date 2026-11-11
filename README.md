@@ -32,6 +32,35 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## Texture packs
+
+PPSSPP texture packs work. None is included: packs are made from the game's own art, so, like the game, you get them yourself, from their authors.
+
+Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then name its folder in `LCSNative.ini`: `TexturePack=` under `[Rendering]`. A second pack fills in what the first doesn't replace: `SecondTexturePack=`.
+
+Tested together, both made for the European version (ULES00151):
+
+| Pack | Authors | Choose it as |
+| --- | --- | --- |
+| [GTA LCS HD+ Interface v2.1](https://libertycity.net/files/gta-liberty-city-stories/244100-gta-lcs-hd-interface-v2-1.html) | SonofUgly, Sorux, MisaelVieira93, djdarko, Flentric | `TexturePack`: the HUD, menus and text. It comes in 128 and 256 sizes; 256 suits PC resolutions. |
+| [GTA LCS Ultimate HD Project v2.3](https://es.libertycity.net/files/gta-liberty-city-stories/193958-gta-liberty-city-stories-ultimate-hd-project-for-ppsspp.html) | MisaelVieira93, Sorux, djdarko | `SecondTexturePack`: the world, vehicles, effects. |
+
+Their large images (4096 by 4096) are put on the graphics card while the game starts, so that the first time one shows doesn't stall a frame. Together the two packs, with their mipmaps, use about 1.4 GB of memory and roughly 1 GB more of video memory.
+
+A pack made for another region may match only partly: a texture it doesn't match stays as it is.
+
+Each pack image also gets smaller copies (mipmaps), made when the pack loads, so distant roads and walls don't shimmer.
+
+For pack makers, what this reads from a pack's `textures.ini` ([format](https://github.com/hrydgard/ppsspp/wiki/Texture-replacement-ini-syntax)):
+
+- `[options]`: `hash` (`xxh64`, `xxh32` or `quick`) and `ignoreAddress`.
+- `[hashes]`: entries with the full 24-digit key; folders in file names with `/` or `\`.
+- PNG images.
+
+Not read yet: entries tied to a memory address (keys not starting with `00000000` when `ignoreAddress` is off), mipmap entries (`..._1 = ...`), `[hashranges]`, `[filtering]`, `[reducehashranges]`, and DDS or KTX2 images.
+
+`Rendering.TextureCacheEntries` and `Rendering.TextureCacheMB` set the size of the texture cache. Packs with large images, or long sessions, can use more than the defaults of 8192 and 256; if you have the memory to spare, 16384 and 512 avoid reloading textures.
+
 ## Mouse and keyboard
 
 Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A

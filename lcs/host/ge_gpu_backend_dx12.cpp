@@ -1,3 +1,4 @@
+#include "lcs_texture_pack.hpp"
 #include "ge_gpu_backend.hpp"
 #include "ge_present_shader.hpp"
 #include "lcs_display_menu.hpp"
@@ -253,7 +254,26 @@ struct Dx12Texture {
     std::uint64_t checksum{};
     std::uint64_t signature_epoch{};
     std::uint64_t last_used_epoch{};
-    std::vector<std::byte> rgba8;
+    // Shared, so that a texture pack's image is not copied for each texture that shows it.
+    std::shared_ptr<const std::vector<std::byte>> pixels;
+    // A texture pack image's smaller levels (1..mip_levels-1), kept apart from its full-size pixels. Null otherwise:
+    // then every level is in pixels.
+    std::shared_ptr<const std::vector<std::byte>> mips;
+};
+
+std::uint64_t texture_bytes(const Dx12Texture &texture) noexcept {
+    return (texture.pixels ? texture.pixels->size() : 0u) + (texture.mips ? texture.mips->size() : 0u);
+}
+
+// A large texture pack image, put on the graphics card a slice per frame before the game first shows it. A texture
+// that shows it takes this image instead of uploading its own.
+struct Dx12PreloadedTexture {
+    std::shared_ptr<const lcs::TexturePackImage> image;
+    ComPtr<ID3D12Resource> resource;
+    std::shared_ptr<Dx12TexturePlacement> placement;
+    std::uint32_t level{};      // the level being sent
+    std::uint32_t rows_done{};  // of that level
+    bool ready{};
 };
 
 struct Dx12FramebufferTarget {
@@ -341,6 +361,9 @@ struct Dx12GeState {
     std::uint64_t last_texture_lookup_key{};
     Dx12Texture *last_texture_lookup{};
     std::vector<std::uint64_t> pending_texture_keys;
+    std::vector<Dx12PreloadedTexture> preloads;
+    std::uint32_t preload_generation{0xFFFFFFFFu};
+    bool preload_logged{};
     std::vector<std::uint32_t> free_texture_srvs;
     std::vector<Dx12RetiredSrv> retired_texture_srvs;
     std::unordered_map<std::uint64_t, std::uint32_t> sampler_cache;
@@ -418,6 +441,7 @@ std::uint64_t texture_key(const GeGpuDrawDescriptor &draw) noexcept {
     key = hash_mix(key, draw.texture_selected_level);
     key = hash_mix(key, static_cast<std::uint64_t>(draw.texture_clamp_u));
     key = hash_mix(key, static_cast<std::uint64_t>(draw.texture_clamp_v));
+    key = hash_mix(key, lcs::texture_pack_generation());
     return key;
 }
 
@@ -2309,7 +2333,10 @@ HRESULT create_texture_image(Dx12GeState &s, const D3D12_RESOURCE_DESC &desc,
 
 bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
                             std::uint32_t base_width, std::uint32_t base_height,
-                            std::uint32_t mip_levels, std::vector<std::byte> packed) noexcept {
+                            std::uint32_t mip_levels, std::shared_ptr<const std::vector<std::byte>> pixels,
+                            std::uint64_t known_checksum = 0u,
+                            std::shared_ptr<const std::vector<std::byte>> mips = nullptr,
+                            const GeGpuDrawDescriptor *sampler_draw = nullptr) noexcept {
     if (!s.enabled || !draw.texture_enabled || base_width == 0u || base_height == 0u ||
         mip_levels == 0u || mip_levels > 8u) return false;
     std::size_t expected = 0u;
@@ -2321,10 +2348,18 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
         w = std::max(1u, w >> 1u);
         h = std::max(1u, h >> 1u);
     }
-    if (packed.size() != expected) return false;
+    if (!pixels) return false;
+    if (mips != nullptr) {
+        // Level 0 in pixels, the rest in mips.
+        const std::size_t level0 = static_cast<std::size_t>(base_width) * base_height * 4u;
+        if (pixels->size() != level0 || mips->size() != expected - level0) return false;
+    } else if (pixels->size() != expected) {
+        return false;
+    }
+    const std::vector<std::byte> &packed = *pixels;
     const std::uint64_t key = texture_key(draw);
-    std::uint64_t checksum = 0u;
-    {
+    std::uint64_t checksum = known_checksum;
+    if (checksum == 0u) {
         const perf::Scope perf_scope(perf::kTexHashUs);
         checksum = hash_bytes(packed);
     }
@@ -2342,15 +2377,22 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
                 retire.transient_placements.push_back(found->second.placement);
         }
         retire_texture_srv(s, found->second.srv_index);
-        s.texture_cache_bytes -= std::min<std::uint64_t>(s.texture_cache_bytes, found->second.rgba8.size());
+        s.texture_cache_bytes -= std::min<std::uint64_t>(s.texture_cache_bytes, texture_bytes(found->second));
         clear_texture_lookup_cache(s);
         s.textures.erase(found);
     }
     const std::uint32_t entry_limit = lcs_render_configuration().rendering.texture_cache_entries;
-    // The setting, within what the graphics card has.
-    std::uint64_t byte_limit = static_cast<std::uint64_t>(lcs_render_configuration().rendering.texture_cache_mb) * 1024ull * 1024ull;
+    // Room for the texture packs' images on top of the setting, within what the graphics card has.
+    std::uint64_t byte_limit = static_cast<std::uint64_t>(lcs_render_configuration().rendering.texture_cache_mb) * 1024ull * 1024ull +
+                               lcs::texture_pack_decoded_bytes();
     if (s.video_budget_bytes != 0u)
         byte_limit = std::max<std::uint64_t>(std::min<std::uint64_t>(byte_limit, s.video_budget_bytes / 4u * 3u), 64ull << 20u);
+    static bool limit_logged = false;
+    if (!limit_logged && lcs::texture_pack_decoded_bytes() != 0u) {
+        limit_logged = true;
+        std::cerr << "[texture-cache] limit " << (byte_limit >> 20u) << " MB (graphics card budget "
+                  << (s.video_budget_bytes >> 20u) << " MB)" << std::endl;
+    }
     while (s.cache_full_epoch != s.frame_epoch &&
            (s.textures.size() >= entry_limit || s.texture_cache_bytes + packed.size() > byte_limit)) {
         auto victim = next_eviction_victim(s);
@@ -2373,7 +2415,7 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
         }
         retire_texture_srv(s, victim->second.srv_index);
         s.texture_cache_bytes -= std::min<std::uint64_t>(
-            s.texture_cache_bytes, victim->second.rgba8.size());
+            s.texture_cache_bytes, texture_bytes(victim->second));
         clear_texture_lookup_cache(s);
         s.textures.erase(victim);
     }
@@ -2395,23 +2437,138 @@ bool prepare_texture_upload(Dx12GeState &s, const GeGpuDrawDescriptor &draw,
     texture.checksum = checksum;
     texture.signature_epoch = s.frame_epoch;
     texture.last_used_epoch = s.frame_epoch;
-    texture.rgba8 = std::move(packed);
-    HRESULT hr = create_texture_image(s, desc, texture);
-    if (FAILED(hr)) return false;
+    bool preloaded = false;
+    {
+        for (const Dx12PreloadedTexture &preload : s.preloads) {
+            if (preload.ready && &preload.image->rgba8 == pixels.get() && preload.image->levels == mip_levels) {
+                texture.image = preload.resource;
+                texture.placement = preload.placement;
+                preloaded = true;
+                break;
+            }
+        }
+    }
+    texture.pixels = std::move(pixels);
+    texture.mips = std::move(mips);
+    if (!preloaded) {
+        HRESULT hr = create_texture_image(s, desc, texture);
+        if (FAILED(hr)) return false;
+        perf::add(perf::kTexKb, texture_bytes(texture) / 1024u);
+    }
+    perf::add(perf::kTexNew);
 
     texture.srv_index = allocate_texture_srv(s);
     if (texture.srv_index == 0u) return false;
-    texture.sampler_index = ensure_sampler(s, draw);
+    texture.sampler_index = ensure_sampler(s, sampler_draw != nullptr ? *sampler_draw : draw);
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
     srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srv.Format = kColorFormat;
     srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srv.Texture2D.MipLevels = mip_levels;
     s.device->CreateShaderResourceView(texture.image.Get(), &srv, srv_cpu(s, texture.srv_index));
-    s.texture_cache_bytes += texture.rgba8.size();
-    s.pending_texture_keys.push_back(key);
+    s.texture_cache_bytes += texture_bytes(texture);
+    if (!preloaded) s.pending_texture_keys.push_back(key);
     s.textures.emplace(key, std::move(texture));
     return true;
+}
+
+// Texture pack images of 32 MB or more go to the graphics card ahead of their first use, 8 MB a frame from the frame's
+// upload ring, so that none costs a frame of its own when the game first shows it (a 64 MB upload took over 100 ms).
+void record_texture_preloads(Dx12GeState &s, Dx12FrameResources &frame) noexcept {
+    constexpr std::size_t kMinBytes = 32u << 20u;
+    constexpr UINT64 kSliceBytes = 8u << 20u;
+    const std::uint32_t generation = lcs::texture_pack_generation();
+    if (generation != s.preload_generation) {
+        if (lcs::texture_pack_decoded_bytes() == 0u) return;  // not decoded yet
+        for (Dx12PreloadedTexture &old : s.preloads) {  // another pack: free them once the GPU is done
+            for (Dx12FrameResources &retire : s.frames) {
+                if (old.resource) retire.transient_resources.push_back(old.resource);
+                if (old.placement) retire.transient_placements.push_back(old.placement);
+            }
+        }
+        s.preloads.clear();
+        s.preload_generation = generation;
+        s.preload_logged = false;
+        for (auto &image : lcs::texture_pack_large_images(kMinBytes)) {
+            Dx12PreloadedTexture preload{};
+            preload.image = std::move(image);
+            s.preloads.push_back(std::move(preload));
+        }
+    }
+    if (!s.texture_upload_ring_enabled || !frame.texture_upload_buffer || !frame.mapped_texture_upload) return;
+    for (Dx12PreloadedTexture &preload : s.preloads) {
+        if (preload.ready) continue;
+        const std::uint32_t width = preload.image->width, height = preload.image->height;
+        if (!preload.resource) {
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            desc.Width = width;
+            desc.Height = height;
+            desc.DepthOrArraySize = 1u;
+            desc.MipLevels = static_cast<UINT16>(preload.image->levels);
+            desc.Format = kColorFormat;
+            desc.SampleDesc.Count = 1u;
+            desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+            Dx12Texture holder{};
+            if (FAILED(create_texture_image(s, desc, holder))) {
+                preload.ready = true;  // left to the normal upload
+                preload.image = std::make_shared<const lcs::TexturePackImage>();
+                return;
+            }
+            preload.resource = holder.image;
+            preload.placement = holder.placement;
+            return;  // creating it is this frame's share
+        }
+        // The level being sent: level 0 from the image, the smaller ones from its mips, one after the other.
+        const std::uint32_t level_width = std::max(1u, width >> preload.level);
+        const std::uint32_t level_height = std::max(1u, height >> preload.level);
+        const std::byte *level_pixels = preload.image->rgba8.data();
+        if (preload.level > 0u) {
+            level_pixels = preload.image->mips.data();
+            for (std::uint32_t level = 1u; level < preload.level; ++level)
+                level_pixels += static_cast<std::size_t>(std::max(1u, width >> level)) * std::max(1u, height >> level) * 4u;
+        }
+        const UINT64 row_pitch = (static_cast<UINT64>(level_width) * 4u + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u) &
+                                 ~static_cast<UINT64>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1u);
+        const UINT64 offset = (static_cast<UINT64>(frame.texture_upload_cursor) + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1u) &
+                              ~static_cast<UINT64>(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1u);
+        if (offset >= kTextureUploadCapacity) return;
+        const UINT64 room = std::min<UINT64>(kSliceBytes, kTextureUploadCapacity - offset);
+        const std::uint32_t rows = static_cast<std::uint32_t>(std::min<UINT64>(level_height - preload.rows_done, room / row_pitch));
+        if (rows == 0u) return;
+        const std::size_t row_bytes = static_cast<std::size_t>(level_width) * 4u;
+        for (std::uint32_t y = 0u; y < rows; ++y)
+            std::memcpy(frame.mapped_texture_upload + offset + y * row_pitch,
+                        level_pixels + static_cast<std::size_t>(preload.rows_done + y) * row_bytes, row_bytes);
+        frame.texture_upload_cursor = static_cast<std::size_t>(offset + rows * row_pitch);
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = preload.resource.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = preload.level;
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = frame.texture_upload_buffer.Get();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint.Offset = offset;
+        src.PlacedFootprint.Footprint.Format = kColorFormat;
+        src.PlacedFootprint.Footprint.Width = level_width;
+        src.PlacedFootprint.Footprint.Height = rows;
+        src.PlacedFootprint.Footprint.Depth = 1u;
+        src.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(row_pitch);
+        s.list->CopyTextureRegion(&dst, 0u, preload.rows_done, 0u, &src, nullptr);
+        preload.rows_done += rows;
+        if (preload.rows_done == level_height && ++preload.level < preload.image->levels) {
+            preload.rows_done = 0u;  // on to the next level
+        } else if (preload.rows_done == level_height) {
+            transition(s.list.Get(), preload.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            preload.ready = true;
+        }
+        return;  // one slice a frame
+    }
+    if (!s.preload_logged && !s.preloads.empty()) {
+        s.preload_logged = true;
+        std::cerr << "[texture-cache] " << s.preloads.size() << " large pack images on the graphics card ahead of use" << std::endl;
+    }
 }
 
 void record_pending_texture_uploads(Dx12GeState &s, Dx12FrameResources &frame) noexcept {
@@ -2424,7 +2581,7 @@ void record_pending_texture_uploads(Dx12GeState &s, Dx12FrameResources &frame) n
         auto found = s.textures.find(key);
         if (found == s.textures.end()) continue;
         Dx12Texture &texture = found->second;
-        if (!texture.image || texture.rgba8.empty()) continue;
+        if (!texture.image || !texture.pixels || texture.pixels->empty()) continue;
 
         const D3D12_RESOURCE_DESC desc = texture.image->GetDesc();
         std::array<D3D12_PLACED_SUBRESOURCE_FOOTPRINT, 8> footprints{};
@@ -2485,11 +2642,15 @@ void record_pending_texture_uploads(Dx12GeState &s, Dx12FrameResources &frame) n
         std::uint32_t h = texture.height;
         for (std::uint32_t level = 0u; level < texture.mip_levels; ++level) {
             const std::size_t row_bytes = static_cast<std::size_t>(w) * 4u;
+            // A pack image keeps its smaller levels apart (texture.mips); otherwise all levels follow in pixels.
+            const std::size_t level0_bytes = static_cast<std::size_t>(texture.width) * texture.height * 4u;
+            const std::byte *level_source = texture.mips && level > 0u
+                ? texture.mips->data() + (source_offset - level0_bytes)
+                : texture.pixels->data() + source_offset;
             for (std::uint32_t y = 0u; y < h; ++y) {
                 std::memcpy(mapped_base + footprints[level].Offset +
                                 static_cast<std::size_t>(y) * footprints[level].Footprint.RowPitch,
-                            texture.rgba8.data() + source_offset +
-                                static_cast<std::size_t>(y) * row_bytes,
+                            level_source + static_cast<std::size_t>(y) * row_bytes,
                             row_bytes);
             }
             source_offset += row_bytes * h;
@@ -3018,7 +3179,7 @@ bool ge_gpu_backend_upload_decoded_texture(const GeGpuDrawDescriptor &draw, std:
                                            std::uint32_t height,
                                            std::span<const std::byte> rgba) noexcept {
     if (rgba.empty()) return false;
-    std::vector<std::byte> packed(rgba.begin(), rgba.end());
+    auto packed = std::make_shared<const std::vector<std::byte>>(rgba.begin(), rgba.end());
     return prepare_texture_upload(state(), draw, width, height, 1u, std::move(packed));
 }
 
@@ -3042,14 +3203,38 @@ bool ge_gpu_backend_upload_decoded_texture_chain(const GeGpuDrawDescriptor &draw
         for (const auto &level : levels) packed.insert(packed.end(), level.rgba8.begin(), level.rgba8.end());
     } catch (...) { return false; }
     return prepare_texture_upload(state(), draw, levels.front().width, levels.front().height,
-                                  static_cast<std::uint32_t>(levels.size()), std::move(packed));
+                                  static_cast<std::uint32_t>(levels.size()),
+                                  std::make_shared<const std::vector<std::byte>>(std::move(packed)));
 }
 
 bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescriptor &draw,
                                                         std::uint32_t width, std::uint32_t height,
                                                         std::uint32_t mip_levels,
                                                         std::vector<std::byte> packed) noexcept {
-    return prepare_texture_upload(state(), draw, width, height, mip_levels, std::move(packed));
+    return prepare_texture_upload(state(), draw, width, height, mip_levels,
+                                  std::make_shared<const std::vector<std::byte>>(std::move(packed)));
+}
+
+bool ge_gpu_backend_upload_shared_texture(const GeGpuDrawDescriptor &draw, std::uint32_t width, std::uint32_t height,
+                                          std::shared_ptr<const std::vector<std::byte>> rgba8, std::uint32_t levels,
+                                          std::shared_ptr<const std::vector<std::byte>> mips) noexcept {
+    if (!rgba8) return false;
+    // An image that never changes: its address stands for its contents.
+    const std::uint64_t checksum = hash_mix(reinterpret_cast<std::uintptr_t>(rgba8.get()), rgba8->size()) | 1u;
+    if (levels <= 1u || !mips) return prepare_texture_upload(state(), draw, width, height, 1u, std::move(rgba8), checksum);
+    // Sampled through its own smaller levels, whatever the game's texture had: a pack image is usually much larger
+    // than the texture it replaces. Where the game picks a level itself, the same distance in the pack's levels.
+    GeGpuDrawDescriptor sampled = draw;
+    sampled.texture_mipmap_enabled = true;
+    sampled.texture_mipmap_linear = true;
+    sampled.texture_max_level = levels - 1u;
+    if (draw.texture_level_mode == 1u && draw.texture_width != 0u) {
+        const auto extra = static_cast<std::uint32_t>(std::max(0.0, std::round(std::log2(
+            static_cast<double>(width) / static_cast<double>(draw.texture_width)))));
+        sampled.texture_selected_level = std::min(levels - 1u, draw.texture_selected_level + extra);
+    }
+    return prepare_texture_upload(state(), draw, width, height, levels, std::move(rgba8), checksum, std::move(mips),
+                                  &sampled);
 }
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte> destination) noexcept {
     const Dx12GeState &s = state();
@@ -3383,6 +3568,7 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
         return false;
     }
 
+    record_texture_preloads(s, frame);
     record_pending_texture_uploads(s, frame);
 
     const D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(s.target_width),
@@ -3784,6 +3970,7 @@ bool ge_gpu_backend_texture_available(const GeGpuDrawDescriptor &) noexcept { re
 bool ge_gpu_backend_upload_decoded_texture(const GeGpuDrawDescriptor &, std::uint32_t, std::uint32_t, std::span<const std::byte>) noexcept { return false; }
 bool ge_gpu_backend_upload_decoded_texture_chain(const GeGpuDrawDescriptor &, std::span<const GeGpuDecodedMipLevel>) noexcept { return false; }
 bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescriptor &, std::uint32_t, std::uint32_t, std::uint32_t, std::vector<std::byte>) noexcept { return false; }
+bool ge_gpu_backend_upload_shared_texture(const GeGpuDrawDescriptor &, std::uint32_t, std::uint32_t, std::shared_ptr<const std::vector<std::byte>>, std::uint32_t, std::shared_ptr<const std::vector<std::byte>>) noexcept { return false; }
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte>) noexcept { return false; }
 void ge_gpu_backend_accumulate_color_triangles(const GeGpuDrawDescriptor &, std::span<const GeGpuVertex>) noexcept {}
 void ge_gpu_backend_accumulate_hardware_triangles(const GeGpuDrawDescriptor &, const GeGpuHardwareTransform &, std::span<const GeGpuVertex>, std::span<const std::uint32_t>) noexcept {}

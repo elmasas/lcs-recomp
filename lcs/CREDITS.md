@@ -5,6 +5,8 @@ Projects this one learned from. Unless a section says code is included (with its
 
 # Other
 
+Texture packs are in PPSSPP's format, so that packs made for the emulator work here; see `lcs/THIRD_PARTY.md`.
+
 `lcs/generated/generated_unit_0083.cpp`, at the start of the chunk loader `L_089514F8`, stops a crash of this project's own:
 the world's list of loaded chunks holds 32, and at a view distance of 2 or more the game can queue more than that between
 sector swaps.

@@ -2850,6 +2850,14 @@ bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescripto
     return prepare_texture(s, draw, width, height, mip_levels, std::move(packed));
 }
 
+bool ge_gpu_backend_upload_shared_texture(const GeGpuDrawDescriptor &draw, std::uint32_t width, std::uint32_t height,
+                                          std::shared_ptr<const std::vector<std::byte>> rgba8, std::uint32_t,
+                                          std::shared_ptr<const std::vector<std::byte>>) noexcept {
+    // The full-size image only: the smaller levels of a pack image are used by the DirectX 12 backend so far.
+    if (!rgba8) return false;
+    return ge_gpu_backend_upload_decoded_texture_chain_packed(draw, width, height, 1u, std::vector<std::byte>(*rgba8));
+}
+
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte> destination) noexcept {
     VulkanState &s = state();
     std::lock_guard<std::recursive_mutex> guard(s.mutex);

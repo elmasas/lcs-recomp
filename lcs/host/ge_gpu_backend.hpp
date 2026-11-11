@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -370,6 +371,13 @@ void ge_gpu_backend_note_through_extent(const GeGpuDrawDescriptor &draw,
     const GeGpuDrawDescriptor &draw,
     std::uint32_t base_width, std::uint32_t base_height,
     std::uint32_t mip_levels, std::vector<std::byte> rgba8) noexcept;
+
+// An image that never changes while this pointer lives (a texture pack's): shared rather than copied, and not hashed.
+// `mips` holds its smaller levels (1..levels-1), sampled for distant surfaces; null with levels == 1.
+[[nodiscard]] bool ge_gpu_backend_upload_shared_texture(
+    const GeGpuDrawDescriptor &draw, std::uint32_t width, std::uint32_t height,
+    std::shared_ptr<const std::vector<std::byte>> rgba8, std::uint32_t levels = 1u,
+    std::shared_ptr<const std::vector<std::byte>> mips = nullptr) noexcept;
 
 [[nodiscard]] bool ge_gpu_backend_copy_last_texture_rgba(
     std::span<std::byte> destination) noexcept;

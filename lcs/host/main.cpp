@@ -1,3 +1,4 @@
+#include "lcs_texture_pack.hpp"
 #include "psprecomp/common.hpp"
 #include "psprecomp/elf32.hpp"
 #include "psprecomp/runtime.hpp"
@@ -50,6 +51,7 @@ int main(int argc, char **argv) {
         } else if (arg == "--game" && i + 1 < argc) {
             game_root = argv[++i];
             elf_path = game_root / "EBOOT.ELF";
+            lcs::texture_pack_set_root(game_root.string());
         } else if (arg == "--elf" && i + 1 < argc) {
             elf_path = argv[++i];
         } else if ((arg == "--max-dispatches" || arg == "--dispatch-cap") && i + 1 < argc) {
