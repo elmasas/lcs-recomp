@@ -645,7 +645,8 @@ void Runtime::run(std::uint32_t entry, std::uint64_t max_dispatches) {
             const std::int32_t dispatch_thread_uid = g_runtime_thread_uid;
             RecompiledFunction function = lookup_function(before);
             if (function == nullptr) {
-                stop("No recompiled function registered at " + hex32(before));
+                stop("No recompiled function registered at " + hex32(before) + " (last dispatched function " + hex32(g_runtime_dispatch_pc) +
+                 ", ra " + hex32(cpu_.gpr[31]) + ", sp " + hex32(cpu_.gpr[29]) + ", a0 " + hex32(cpu_.gpr[4]) + ")");
                 return;
             }
             g_runtime_dispatch_pc = before;
@@ -722,7 +723,8 @@ void Runtime::run(std::uint32_t entry, std::uint64_t max_dispatches) {
             RecompiledFunction function = lookup_generated_unit(before);
             if (function == nullptr) function = lookup_function(before);
             if (function == nullptr) {
-                stop("No recompiled function registered at " + hex32(before));
+                stop("No recompiled function registered at " + hex32(before) + " (last dispatched function " + hex32(g_runtime_dispatch_pc) +
+                 ", ra " + hex32(cpu_.gpr[31]) + ", sp " + hex32(cpu_.gpr[29]) + ", a0 " + hex32(cpu_.gpr[4]) + ")");
                 break;
             }
             g_runtime_dispatch_pc = before;
@@ -781,7 +783,8 @@ void Runtime::run(std::uint32_t entry, std::uint64_t max_dispatches) {
         RecompiledFunction function = lookup_function(before);
         const FunctionEntry *function_entry = lookup_entry(before);
         if (function == nullptr) {
-            stop("No recompiled function registered at " + hex32(before));
+            stop("No recompiled function registered at " + hex32(before) + " (last dispatched function " + hex32(g_runtime_dispatch_pc) +
+                 ", ra " + hex32(cpu_.gpr[31]) + ", sp " + hex32(cpu_.gpr[29]) + ", a0 " + hex32(cpu_.gpr[4]) + ")");
             break;
         }
         g_runtime_dispatch_pc = before;
