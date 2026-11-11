@@ -1,5 +1,7 @@
 #include "display_window.hpp"
 
+#include <string>
+#include <iostream>
 #include <span>
 #include "ge_gpu_backend.hpp"
 #include "lcs_mouse.hpp"
@@ -7,6 +9,7 @@
 #include "lcs_display_menu.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_key_bindings.hpp"
+#include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
 
 #if defined(_WIN32)
@@ -614,13 +617,53 @@ HostInputState display_window_input() {
     const bool driving = lcs_player_in_vehicle();
     const ControlsConfiguration &controls = lcs_render_configuration().controls;
 
-    if (focused) {
+    // LCS_TEST_KEYS="seconds:Key;...": presses keys for 0.2 s through the same path, without the real keyboard or focus.
+    struct TestKey {
+        double at;
+        HostKey key;
+        double hold;
+    };
+    static const std::vector<TestKey> test_keys = [] {
+        std::vector<TestKey> keys;
+        const char *text = std::getenv("LCS_TEST_KEYS");
+        std::string rest = text != nullptr ? text : "";
+        while (!rest.empty()) {
+            const auto end = rest.find(';');
+            const std::string item = rest.substr(0u, end);
+            rest = end == std::string::npos ? std::string{} : rest.substr(end + 1u);
+            const auto colon = item.find(':');
+            if (colon == std::string::npos) continue;
+            HostKey key{}, extra{};
+            std::string name = item.substr(colon + 1u);
+            double hold = 0.2;  // "12:Tab*2" holds it for 2 s
+            if (const auto star = name.find('*'); star != std::string::npos) {
+                hold = std::atof(name.c_str() + star + 1u);
+                name.resize(star);
+            }
+            if (lookup_host_key(normalize_binding_token(name), key, extra))
+                keys.push_back({std::atof(item.c_str()), key, hold});
+        }
+        return keys;
+    }();
+    static const auto test_start = std::chrono::steady_clock::now();
+    const double test_now = std::chrono::duration<double>(std::chrono::steady_clock::now() - test_start).count();
+    if (focused || !test_keys.empty()) {
         const bool mouse_in_window = cursor_in_client(g_window);
         const auto is_down = [&](HostKey key) {
+            for (const TestKey &test : test_keys) {
+                if (test.key == key && test_now >= test.at && test_now < test.at + test.hold) return true;
+            }
+            if (!test_keys.empty()) return false;
             if (host_key_is_mouse(key) && !mouse_in_window) return false;
             const int virtual_key = win32_virtual_key(key);
             return virtual_key != 0 && key_down(virtual_key);
         };
+        {   // With metrics on: the Pause key marks a stutter the player felt, for the report.
+            static bool mark_was = false;
+            const bool mark = test_keys.empty() && key_down(VK_PAUSE);
+            if (mark && !mark_was) (void)perf::mark();
+            mark_was = mark;
+        }
         const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
         input.buttons |= keys.buttons;
         input.accelerate = keys.accelerate;

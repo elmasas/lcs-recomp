@@ -12,6 +12,8 @@
 #include "lcs_frame_limit.hpp"
 #include "lcs_lang.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_perf_log.hpp"
+#include "lcs_render_config.hpp"
 #include "lcs_stress_test.hpp"
 #include "lcs_world_detail.hpp"
 
@@ -277,8 +279,29 @@ const VirtualDiscFile *register_virtual_disc_file(const std::filesystem::path &p
     return &inserted->second;
 }
 
+// Streaming reads the same few files over and over, up to ~17 reads in a frame, and opening a file costs more than
+// the read itself. Keep them open: the disc files never change while the game runs. LCS_IO_HANDLE_CACHE=0: reopen.
+std::ifstream &open_virtual_file(const std::filesystem::path &path, std::ifstream &scratch) {
+    static const bool cached = [] {
+        const char *text = std::getenv("LCS_IO_HANDLE_CACHE");
+        return text == nullptr || *text != '0';
+    }();
+    if (!cached) {
+        scratch.open(path, std::ios::binary);
+        return scratch;
+    }
+    static std::unordered_map<std::string, std::ifstream> files;
+    const auto [found, inserted] = files.try_emplace(path.string());
+    if (inserted) found->second.open(path, std::ios::binary);
+    found->second.clear();
+    return found->second;
+}
+
 std::size_t read_virtual_disc(VirtualDiscHandle &handle, std::span<std::uint8_t> output) {
     if (handle.position >= handle.length || output.empty()) return 0u;
+    const perf::Scope perf_scope(perf::kIoUs);
+    perf::add(perf::kIoReads);
+    perf::add(perf::kIoKb, output.size() / 1024u);
     const std::uint64_t available = handle.length - handle.position;
     const std::size_t requested =
         static_cast<std::size_t>(std::min<std::uint64_t>(available, output.size()));
@@ -310,7 +333,8 @@ std::size_t read_virtual_disc(VirtualDiscHandle &handle, std::span<std::uint8_t>
             const std::uint64_t file_offset = absolute - file_start;
             const std::size_t chunk = static_cast<std::size_t>(
                 std::min<std::uint64_t>(requested - written, file->size - file_offset));
-            std::ifstream input(file->native_path, std::ios::binary);
+            std::ifstream scratch;
+            std::ifstream &input = open_virtual_file(file->native_path, scratch);
             if (!input) break;
             input.seekg(static_cast<std::streamoff>(file_offset), std::ios::beg);
             input.read(reinterpret_cast<char *>(output.data() + written),
@@ -1019,7 +1043,11 @@ struct DisplayState {
 };
 DisplayState display_state;
 std::uint64_t display_vblank_index{};
-constexpr std::uint64_t kVblankPeriodUs = 16683u;
+// The game's clock follows measured time, so its step adapts to this. Above 60 (Timing.FrameRate) the VBlank comes sooner.
+std::uint64_t vblank_period_us() noexcept {
+    const std::uint32_t fps = lcs_render_configuration().timing.frame_rate;
+    return fps <= 60u ? 16683u : 1000000u / fps;
+}
 
 struct GeCallbackRecord {
     std::uint32_t signal_function{};
@@ -1502,7 +1530,7 @@ bool dispatch_vblank_interrupt(psprecomp::Runtime &rt, psprecomp::AllegrexContex
     current->second.suspended_context = handler;
     current->second.delay_until_us = virtual_time_us + delay_us;
     current->second.delay_sequence = thread_table.next_delay_sequence++;
-    g_vblank_interrupt_due_us = virtual_time_us + delay_us + kVblankPeriodUs;
+    g_vblank_interrupt_due_us = virtual_time_us + delay_us + vblank_period_us();
     if (!activate_next_thread(ctx, "vblank-interrupt"))
         rt.stop("PSP scheduler deadlock while waiting for the VBlank interrupt");
     return true;
@@ -1622,19 +1650,51 @@ std::uint64_t starvation_tick_microseconds = 1u;
 double wall_clock_limit_seconds = 0.0;
 std::chrono::steady_clock::time_point wall_clock_start;
 
+// Where the player is, for the metrics (US 1.05, as the stress test reads it: FindPlayerCoors' matrix at +48).
+void note_player_for_metrics(psprecomp::Runtime &rt) {
+    auto &memory = rt.memory();
+    const auto slot = memory.load8(0x08B5E054u);
+    if (slot > 1u) return;
+    const auto ped = memory.load32(0x08B89A10u + slot * 368u);
+    if (ped == 0u || !memory.contains(ped, 1337u)) return;
+    const bool driving = memory.load8(ped + 1336u) != 0u;
+    const auto entity = driving ? memory.load32(ped + 1332u) : ped;
+    if (entity == 0u || !memory.contains(entity, 64u)) return;
+    float position[3]{};
+    for (unsigned i = 0; i < 3u; ++i) {
+        position[i] = std::bit_cast<float>(memory.load32(entity + 48u + i * 4u));
+        if (!std::isfinite(position[i]) || std::abs(position[i]) > 100000.0f) return;
+    }
+    perf::set_player(position[0], position[1], position[2], driving, lcs_menu_active());
+}
+
 std::uint32_t throttle_vblank_to_real_time() {
     static const bool uncapped = std::getenv("LCS_UNCAPPED") != nullptr;
     if (uncapped) return 0u;
+    // The metrics' game_us: from the end of one wait to the start of the next, the game thread's own work.
+    static std::chrono::steady_clock::time_point game_since{};
+    struct GameClock {
+        std::chrono::steady_clock::time_point &since;
+        explicit GameClock(std::chrono::steady_clock::time_point &s) : since(s) {
+            if (perf::g_enabled && since != std::chrono::steady_clock::time_point{})
+                perf::add(perf::kGameUs, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                                 std::chrono::steady_clock::now() - since).count()));
+        }
+        ~GameClock() { since = std::chrono::steady_clock::now(); }
+    } game_clock(game_since);
     constexpr std::uint32_t kMaxSkippedVblanks = 6u;
     static std::chrono::steady_clock::time_point next_vblank{};
-    const auto period = std::chrono::microseconds(kVblankPeriodUs);
+    const auto period = std::chrono::microseconds(vblank_period_us());
     const auto now = std::chrono::steady_clock::now();
     if (next_vblank == std::chrono::steady_clock::time_point{}) {
         next_vblank = now + period;
         return 0u;
     }
     if (now < next_vblank) {
-        precise_sleep_until(next_vblank);
+        {
+            const perf::Scope perf_scope(perf::kThrottleUs);
+            precise_sleep_until(next_vblank);
+        }
         next_vblank += period;
         return 0u;
     }
@@ -1665,6 +1725,7 @@ bool ge_async_enabled() {
 }
 
 void ge_worker_main() {
+    set_host_thread_name(L"GeWorker");
     for (;;) {
         std::function<void()> task;
         {
@@ -1705,6 +1766,7 @@ void ge_worker_wait_idle() {
     std::unique_lock lock(ge_worker.mutex);
     if (!ge_worker.started) return;
     if (ge_worker.tasks.empty() && !ge_worker.busy) return;
+    const perf::Scope perf_scope(perf::kIdleWaitUs);
     ge_worker.cv.wait(lock, [] { return ge_worker.tasks.empty() && !ge_worker.busy; });
 }
 
@@ -1767,6 +1829,7 @@ bool g_ge_list_since_finish = false;
 std::uint32_t g_ge_last_list_address = 0u;
 
 void execute_ge_list_frame(psprecomp::Runtime &rt, std::uint32_t list_address, std::uint64_t vblank) {
+    const perf::Scope perf_scope(perf::kGeListUs);
     if (g_ge_list_since_finish && list_address != g_ge_last_list_address) {
         // Not the image the window keeps.
         ge_finish_shows_this_frame() = false;
@@ -1798,7 +1861,13 @@ void present_frame(psprecomp::Runtime &rt, const PresentRequest &request) {
     }
     ge_gpu_backend_set_display_framebuffer(present_buffer, present_width, present_height);
     fps_overlay_render_frame(present_buffer, present_width, present_height);
-    const bool gpu_frame_ready = ge_gpu_backend_finish_color_frame(request.vblank);
+    perf::add(perf::kVblanks);
+    bool gpu_frame_ready = false;
+    {
+        const perf::Scope perf_scope(perf::kFinishFrameUs);
+        gpu_frame_ready = ge_gpu_backend_finish_color_frame(request.vblank);
+    }
+    if (gpu_frame_ready) perf::frame();
     g_ge_list_since_finish = false;
     static std::uint64_t vblanks_since_gpu_frame = 0u;
     static bool holding_gpu_frame = false;
@@ -2977,8 +3046,13 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 return;
             }
             it->second.clear();
-            it->second.read(reinterpret_cast<char *>(guest_destination), static_cast<std::streamsize>(size));
+            {
+                const perf::Scope perf_scope(perf::kIoUs);
+                it->second.read(reinterpret_cast<char *>(guest_destination), static_cast<std::streamsize>(size));
+            }
             const auto read = static_cast<std::uint32_t>(it->second.gcount());
+            perf::add(perf::kIoReads);
+            perf::add(perf::kIoKb, read / 1024u);
             ctx.set_gpr(2, read);
         });
 
@@ -3205,6 +3279,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             const HostInputState host = stress_test_enabled()
                 ? stress_test_input(rt, {}) : display_window_input();
             const std::uint32_t buttons = host.buttons;
+            if (perf::g_enabled) note_player_for_metrics(rt);
             for (std::uint32_t index = 0u; index < count; ++index) {
                 const std::uint32_t sample = destination + index * sample_size;
                 rt.memory().store32(sample, static_cast<std::uint32_t>(system_time_microseconds()));
@@ -3254,8 +3329,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         });
     runtime.register_hle("sceDisplay", 0x4D4E10ECu,
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
-            const std::uint64_t blank = kVblankPeriodUs / 5u;
-            const std::uint64_t phase = virtual_time_us % kVblankPeriodUs;
+            const std::uint64_t blank = vblank_period_us() / 5u;
+            const std::uint64_t phase = virtual_time_us % vblank_period_us();
             ctx.set_gpr(2, phase < blank ? 1u : 0u);
         });
     runtime.register_hle("sceDisplay", 0x9C6EAAD7u,
@@ -3284,6 +3359,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 present_frame(rt, request);
                 ge_worker.pending_presents.fetch_sub(1u);
             });
+        } else {
+            perf::add(perf::kSkippedPresents);
         }
 
         display_window_pump();
@@ -3294,11 +3371,12 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         }
         audio_output_advance(virtual_time_us);
         if (const std::uint32_t skipped = throttle_vblank_to_real_time(); skipped != 0u) {
-            virtual_time_us += static_cast<std::uint64_t>(skipped) * kVblankPeriodUs;
+            perf::add(perf::kSkippedVblanks, skipped);
+            virtual_time_us += static_cast<std::uint64_t>(skipped) * vblank_period_us();
             display_vblank_index += skipped;
         }
         const std::uint32_t vblank_delay = static_cast<std::uint32_t>(
-            (virtual_time_us / kVblankPeriodUs + 1u) * kVblankPeriodUs - virtual_time_us);
+            (virtual_time_us / vblank_period_us() + 1u) * vblank_period_us() - virtual_time_us);
         if (deliver_pending_ge_callback(ctx, vblank_delay, true)) return;
         if (dispatch_vblank_interrupt(rt, ctx, vblank_delay)) return;
         (void)delay_current_thread(rt, ctx, vblank_delay);
