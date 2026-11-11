@@ -2,6 +2,7 @@
 
 - PSPRecomp, the code this project started from: MIT, see `../LICENSE`.
 - FFmpeg: LGPL 2.1 or later, see `third_party/ffmpeg/COPYING.LGPLv2.1`. Linked as separate DLLs.
+- Dear ImGui 1.92.7, docking branch (tag `v1.92.7-docking`), unmodified: MIT, see `third_party/imgui/LICENSE.txt`.
 - stb_image 2.30 (`nothings/stb` commit d14d46f): public domain or MIT, at the end of `third_party/stb/stb_image.h`.
 - Project2DFX by ThirteenAG, commit `5bba677` (its last MIT release, before it moved to GPL-3.0): MIT, see
   `host/thirteenag/LICENSE`.

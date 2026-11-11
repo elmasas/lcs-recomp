@@ -598,7 +598,9 @@ HostInputState display_window_input() {
             default: return false;
             }
         };
-        const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
+        static MenuKeyFilter menu_keys;
+        const bool gameplay = lcs_camera_in_use() || !lcs_camera_hook_enabled();
+        const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, menu, gameplay, is_down);
         input.buttons |= keys.buttons;
         input.accelerate = keys.accelerate;
         input.brake = keys.brake;

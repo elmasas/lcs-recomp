@@ -194,6 +194,11 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Display.HudScale must be between 0.25 and 1.0");
         return;
     }
+    if (key == "hudatedges") {
+        if (!parse_bool(value, config.display.hud_at_edges))
+            warning(config, line, "Display.HudAtEdges must be true or false");
+        return;
+    }
     if (key == "buttonprompts" || key == "promptstyle") {
         const std::string style = lowercase_copy(trim_copy(value));
         const std::string forbidden = "/\\<>:\"|?* ";
@@ -586,6 +591,11 @@ float corona_distance_scale() noexcept {
     const bool lights_draw = lcs_render_configuration().rendering.lod_lights && !lod_lights_off.load(std::memory_order_relaxed);
     if (!enabled || lights_draw) return 1.0f;
     return view_distance_scale();
+}
+
+void lcs_update_configuration(const std::function<void(LcsConfiguration &)> &change) {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    change(global_configuration());
 }
 
 void lcs_set_view_distance(float value) noexcept {

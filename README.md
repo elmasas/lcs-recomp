@@ -36,14 +36,14 @@ selection; negative values keep textures sharper at a distance.
 
 PPSSPP texture packs work. None is included: packs are made from the game's own art, so, like the game, you get them yourself, from their authors.
 
-Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then name its folder in `LCSNative.ini`: `TexturePack=` under `[Rendering]`. A second pack fills in what the first doesn't replace: `SecondTexturePack=`.
+Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then choose it under F10, Graphics, Texture pack. It applies at once. A second pack fills in what the first doesn't replace: F10, Graphics, Second texture pack.
 
 Tested together, both made for the European version (ULES00151):
 
 | Pack | Authors | Choose it as |
 | --- | --- | --- |
-| [GTA LCS HD+ Interface v2.1](https://libertycity.net/files/gta-liberty-city-stories/244100-gta-lcs-hd-interface-v2-1.html) | SonofUgly, Sorux, MisaelVieira93, djdarko, Flentric | `TexturePack`: the HUD, menus and text. It comes in 128 and 256 sizes; 256 suits PC resolutions. |
-| [GTA LCS Ultimate HD Project v2.3](https://es.libertycity.net/files/gta-liberty-city-stories/193958-gta-liberty-city-stories-ultimate-hd-project-for-ppsspp.html) | MisaelVieira93, Sorux, djdarko | `SecondTexturePack`: the world, vehicles, effects. |
+| [GTA LCS HD+ Interface v2.1](https://libertycity.net/files/gta-liberty-city-stories/244100-gta-lcs-hd-interface-v2-1.html) | SonofUgly, Sorux, MisaelVieira93, djdarko, Flentric | Texture pack: the HUD, menus and text. It comes in 128 and 256 sizes; 256 suits PC resolutions. |
+| [GTA LCS Ultimate HD Project v2.3](https://es.libertycity.net/files/gta-liberty-city-stories/193958-gta-liberty-city-stories-ultimate-hd-project-for-ppsspp.html) | MisaelVieira93, Sorux, djdarko | Second texture pack: the world, vehicles, effects. |
 
 Their large images (4096 by 4096) are put on the graphics card while the game starts, so that the first time one shows doesn't stall a frame. Together the two packs, with their mipmaps, use about 1.4 GB of memory and roughly 1 GB more of video memory.
 
@@ -78,6 +78,16 @@ Street lamps and traffic lights stay lit far into the distance at night, drawn a
 With `LodLights` off, the game's own coronas reach as far as `Rendering.ViewDistance` instead; `LCS_CORONA_DISTANCE=0` keeps them at the game's distances.
 
 ## Mouse and keyboard
+
+In the game's own menus, and on the title screen, these keys always work, whatever the bindings below say:
+
+| Key | In a menu |
+| --- | --- |
+| W, A, S, D or the arrow keys | Move |
+| Enter | Accept. Also skips the title movie and cutscenes. |
+| Escape or Backspace | Go back. Escape also closes the pause menu. |
+
+The rest of this section is about gameplay.
 
 Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A
 binding is one or more names separated by commas. `None` clears it.
