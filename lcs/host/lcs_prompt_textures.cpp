@@ -94,25 +94,8 @@ void rebuild_mip_chain(std::span<std::byte> rgba8, std::uint32_t width, std::uin
         const std::size_t target_offset = offset + source_bytes;
         offset = target_offset;
         if (target_offset + target_bytes > rgba8.size()) return;
-        const auto *source = reinterpret_cast<const std::uint8_t *>(rgba8.data() +
-                                                                    (target_offset - source_bytes));
-        auto *target = reinterpret_cast<std::uint8_t *>(rgba8.data() + target_offset);
-        for (std::uint32_t y = 0u; y < target_height; ++y) {
-            for (std::uint32_t x = 0u; x < target_width; ++x) {
-                const std::uint32_t x0 = std::min(x * 2u + 0u, source_width - 1u);
-                const std::uint32_t x1 = std::min(x * 2u + 1u, source_width - 1u);
-                const std::uint32_t y0 = std::min(y * 2u + 0u, source_height - 1u);
-                const std::uint32_t y1 = std::min(y * 2u + 1u, source_height - 1u);
-                const std::uint8_t *a = source + (y0 * source_width + x0) * 4u;
-                const std::uint8_t *b = source + (y0 * source_width + x1) * 4u;
-                const std::uint8_t *c = source + (y1 * source_width + x0) * 4u;
-                const std::uint8_t *d = source + (y1 * source_width + x1) * 4u;
-                std::uint8_t *out = target + (y * target_width + x) * 4u;
-                for (std::uint32_t channel = 0u; channel < 4u; ++channel)
-                    out[channel] = static_cast<std::uint8_t>(
-                        (a[channel] + b[channel] + c[channel] + d[channel] + 2u) / 4u);
-            }
-        }
+        mip_level_down(rgba8.data() + (target_offset - source_bytes), source_width, source_height,
+                       rgba8.data() + target_offset);
     }
 }
 
@@ -270,6 +253,30 @@ void prompt_texture_dump(std::uint64_t signature, std::uint32_t width, std::uint
     if (manifest)
         manifest << name << " address=0x" << std::hex << address << std::dec
                  << " format=" << format << '\n';
+}
+
+void mip_level_down(const std::byte *source, std::uint32_t source_width, std::uint32_t source_height,
+                    std::byte *target) noexcept {
+    const std::uint32_t target_width = std::max<std::uint32_t>(1u, source_width >> 1u);
+    const std::uint32_t target_height = std::max<std::uint32_t>(1u, source_height >> 1u);
+    const auto *in = reinterpret_cast<const std::uint8_t *>(source);
+    auto *out_base = reinterpret_cast<std::uint8_t *>(target);
+    for (std::uint32_t y = 0u; y < target_height; ++y) {
+        for (std::uint32_t x = 0u; x < target_width; ++x) {
+            const std::size_t x0 = std::min(x * 2u + 0u, source_width - 1u);
+            const std::size_t x1 = std::min(x * 2u + 1u, source_width - 1u);
+            const std::size_t y0 = std::min(y * 2u + 0u, source_height - 1u);
+            const std::size_t y1 = std::min(y * 2u + 1u, source_height - 1u);
+            const std::uint8_t *a = in + (y0 * source_width + x0) * 4u;
+            const std::uint8_t *b = in + (y0 * source_width + x1) * 4u;
+            const std::uint8_t *c = in + (y1 * source_width + x0) * 4u;
+            const std::uint8_t *d = in + (y1 * source_width + x1) * 4u;
+            std::uint8_t *out = out_base + (static_cast<std::size_t>(y) * target_width + x) * 4u;
+            for (std::uint32_t channel = 0u; channel < 4u; ++channel)
+                out[channel] = static_cast<std::uint8_t>(
+                    (a[channel] + b[channel] + c[channel] + d[channel] + 2u) / 4u);
+        }
+    }
 }
 
 }

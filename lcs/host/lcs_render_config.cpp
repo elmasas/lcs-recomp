@@ -297,6 +297,14 @@ void apply_rendering_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Rendering.TextureLodBias must be between -8 and 8");
         return;
     }
+    if (key == "texturepack") {
+        config.rendering.texture_pack = std::string(value);
+        return;
+    }
+    if (key == "secondtexturepack") {
+        config.rendering.texture_pack2 = std::string(value);
+        return;
+    }
     if (key == "viewdistance" || key == "drawdistance" || key == "loddistance") {
         if (!parse_float(value, 1.0f, 4.0f, config.rendering.view_distance))
             warning(config, line, "Rendering.ViewDistance must be between 1 and 4");

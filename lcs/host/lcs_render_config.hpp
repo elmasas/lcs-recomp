@@ -106,6 +106,10 @@ struct RenderingConfiguration {
     float texture_lod_bias{0.0f};
     // LOD distance (TheCamera+224), far clip (RwCamera+132), fog plane (RwCamera+136).
     float view_distance{1.0f};
+    // A folder in <game>/TEXTURES (lcs_texture_pack.cpp). Empty: the game's own textures.
+    std::string texture_pack{};
+    // A second pack under the first: it fills in what the first doesn't replace.
+    std::string texture_pack2{};
     std::uint32_t msaa{4u};
     std::uint32_t depth_precision{24u};
     std::uint32_t texture_cache_entries{8192u};

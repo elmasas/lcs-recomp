@@ -1,3 +1,5 @@
+#include "lcs_texture_pack.hpp"
+#include "lcs_texture_probe.hpp"
 #include "ge_renderer.hpp"
 #include "lcs_perf_log.hpp"
 #include "ge_gpu_backend.hpp"
@@ -4231,6 +4233,7 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
         }
         gpu_draw.primitive = primitive;
         gpu_draw.vertex_count = count;
+        if (lcs::texture_probe_enabled()) lcs::texture_probe_observe(memory, commands, gpu_draw);
 
         // Palette checksum and the once-per-frame texture hash.
         gpu_draw.clut_checksum = 0u;
@@ -4361,6 +4364,10 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
             }
         }
         if (all) {
+            // A pack replaces the texture, unless the chosen button prompts repaint it.
+            const auto pack_image = lcs::texture_pack_find(memory, commands, gpu_draw);
+            std::vector<std::byte> before_prompts;
+            if (pack_image != nullptr) before_prompts.assign(decoded.begin(), decoded.begin() + mip0_bytes);
             lcs::prompt_texture_dump(gpu_draw.texture_content_signature, mip_setups[0].width,
                                      mip_setups[0].height, gpu_draw.texture_address,
                                      gpu_draw.texture_format, layout.through,
@@ -4369,9 +4376,19 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
                                       mip_setups[0].height,
                                       static_cast<std::uint32_t>(level_count),
                                       std::span<std::byte>(decoded));
-            (void)ge_gpu_backend_upload_decoded_texture_chain_packed(
-                gpu_draw, mip_setups[0].width, mip_setups[0].height,
-                level_count, std::move(decoded));
+            if (pack_image != nullptr &&
+                std::equal(before_prompts.begin(), before_prompts.end(), decoded.begin())) {
+                // Aliasing the pack's image: kept alive by it, never copied.
+                (void)ge_gpu_backend_upload_shared_texture(
+                    gpu_draw, pack_image->width, pack_image->height,
+                    std::shared_ptr<const std::vector<std::byte>>(pack_image, &pack_image->rgba8), pack_image->levels,
+                    pack_image->levels > 1u ? std::shared_ptr<const std::vector<std::byte>>(pack_image, &pack_image->mips)
+                                            : nullptr);
+            } else {
+                (void)ge_gpu_backend_upload_decoded_texture_chain_packed(
+                    gpu_draw, mip_setups[0].width, mip_setups[0].height,
+                    level_count, std::move(decoded));
+            }
         } else {
             (void)ge_gpu_backend_upload_decoded_texture(gpu_draw, 0u, 0u, {});
         }
