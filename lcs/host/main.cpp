@@ -6,7 +6,9 @@
 #include "lcs_audio_output.hpp"
 #include "ge_gpu_backend.hpp"
 #include "ge_renderer.hpp"
+#include "lcs_perf_log.hpp"
 #include "lcs_stress_test.hpp"
+#include "lcs_profiler.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_region.hpp"
 
@@ -76,6 +78,7 @@ int main(int argc, char **argv) {
             argc > 0 ? std::filesystem::absolute(argv[0], executable_error).parent_path()
                      : std::filesystem::current_path();
         lcs::initialize_lcs_render_configuration(executable_directory);
+        lcs::perf::init();
 
         auto elf = psprecomp::Elf32Image::from_file(elf_path);
 
@@ -138,8 +141,10 @@ int main(int argc, char **argv) {
 
         const std::uint32_t entry = elf.runtime_entry(psprecomp::kDefaultPspUserLoadBase);
         std::cout << "Running from entry " << psprecomp::hex32(entry) << "\n" << std::flush;
+        lcs::start_profiler(runtime);
         runtime.run(entry, max_dispatches);
         lcs::ge_worker_shutdown();
+        lcs::perf::shutdown();
 
         if (runtime.stopped()) {
             std::cout << "Runtime stopped: " << runtime.stop_reason() << "\n";

@@ -1,4 +1,5 @@
 #include "ge_renderer.hpp"
+#include "lcs_perf_log.hpp"
 #include "ge_gpu_backend.hpp"
 #include "lcs_fps_overlay.hpp"
 #include "lcs_menu.hpp"
@@ -4346,15 +4347,18 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
             try { decoded.resize(total_bytes); } catch (...) { all = false; }
         }
         std::size_t offset = 0u;
-        for (std::uint32_t level = 0u; all && level < level_count; ++level) {
-            const std::size_t bytes = static_cast<std::size_t>(mip_setups[level].width) *
-                                      mip_setups[level].height * 4u;
-            if (!decode_texture_rgba_into(memory, mip_setups[level],
-                                          std::span<std::byte>(decoded).subspan(offset, bytes))) {
-                all = false;
-                break;
+        {
+            const lcs::perf::Scope perf_scope(lcs::perf::kTexDecodeUs);
+            for (std::uint32_t level = 0u; all && level < level_count; ++level) {
+                const std::size_t bytes = static_cast<std::size_t>(mip_setups[level].width) *
+                                          mip_setups[level].height * 4u;
+                if (!decode_texture_rgba_into(memory, mip_setups[level],
+                                              std::span<std::byte>(decoded).subspan(offset, bytes))) {
+                    all = false;
+                    break;
+                }
+                offset += bytes;
             }
-            offset += bytes;
         }
         if (all) {
             lcs::prompt_texture_dump(gpu_draw.texture_content_signature, mip_setups[0].width,

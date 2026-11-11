@@ -16,6 +16,8 @@ Requires Visual Studio 2022 or its Build Tools, with clang-cl from LLVM or from 
 lcs\BUILD_LCS.bat
 ```
 
+`lcs\scripts\build_perf.bat` makes the optimised build (ThinLTO and AVX2) in `out\lcs-perf`, and `lcs\scripts\play_perf.bat` runs it.
+
 ## Play
 
 ```text
