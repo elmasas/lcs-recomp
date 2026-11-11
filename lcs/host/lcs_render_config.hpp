@@ -63,6 +63,7 @@ struct DisplayConfiguration {
     std::string menu_music{"intro"};
     bool gps{true};
     bool classic_pause{false};
+    bool radio_wheel_slow_motion{true};
     std::uint32_t gps_width{2u};
     // Pictures shown by the game's button prompts: "original" or a folder name
     // under <config dir>/textures.

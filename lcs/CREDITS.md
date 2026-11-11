@@ -45,8 +45,10 @@ Save states (`lcs/host/lcs_profile_state.inc`, `lcs_state.hpp`, `lcs_state_io.hp
 states, as in PPSSPP, with the F5/F7 keys many emulators use. No code is taken from any emulator: the format and what it
 saves are this project's own.
 
-Ideas only, no code: the GPS line (`lcs/host/lcs_gps.cpp`) follows GPS Redux for San Andreas
-(`juicermv/GTA-GPS-Redux`). It is written new for this game: it searches the game's own road nodes and draws through
-its own radar functions.
+Ideas only, no code: the radio wheel (`lcs/host/lcs_radio_wheel.cpp`) follows VoidRadioWheel for San Andreas, and the GPS
+line (`lcs/host/lcs_gps.cpp`) follows GPS Redux for San Andreas (`juicermv/GTA-GPS-Redux`). Both are written new for this
+game: the GPS searches the game's own road nodes and draws through its own radar functions, and the wheel changes station
+with the game's own radio button. Neither project's art is included; station logos come from the player's texture pack
+or from the game itself.
 
 The trainer's cheats are the game's own: the routines its cheat-code check calls, and its button codes.

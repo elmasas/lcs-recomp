@@ -21,7 +21,7 @@ MAX_PER_BINDING = 4  # kMaxKeysPerAction
 ACTIONS = (
     "MoveForward", "MoveBack", "MoveLeft", "MoveRight", "Walk", "Sprint",
     "Jump", "EnterVehicle", "Attack", "Aim", "CenterCamera",
-    "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake",
+    "WeaponPrevious", "WeaponNext", "Up", "Down", "Pause", "Camera", "Handbrake", "Horn", "RadioWheel", "WeaponWheel",
 )
 
 # English UI labels: action name, on foot, in vehicle.
@@ -40,10 +40,13 @@ ACTION_LABELS = {
     "WeaponPrevious": ("Previous weapon", "weapon", "radio"),
     "WeaponNext": ("Next weapon", "weapon", "radio"),
     "Up": ("Up", "side mission", "pitch up"),
-    "Down": ("Down", "horn cue", "horn, pitch down"),
+    "Down": ("Down", "horn cue", "pitch down"),
     "Pause": ("Pause", "pause", "pause"),
     "Camera": ("Change camera", "camera", "camera"),
     "Handbrake": ("Handbrake", "—", "handbrake"),
+    "Horn": ("Horn", "—", "horn"),
+    "RadioWheel": ("Radio wheel", "—", "radio wheel: hold, point, release"),
+    "WeaponWheel": ("Weapon wheel", "weapon wheel: hold, point, release", "—"),
 }
 
 # Pad ini keys (Xbox names) and display: Xbox, PlayStation, on-foot role.
@@ -106,6 +109,9 @@ DEFAULT_KEYS = {
     "Pause": ["Escape"],
     "Camera": ["V"],
     "Handbrake": ["Space"],
+    "Horn": ["G"],
+    "RadioWheel": ["Q"],
+    "WeaponWheel": ["Tab"],
 }
 
 DEFAULT_PAD = {
@@ -124,7 +130,7 @@ DEFAULT_PAD = {
     "PadDpadLeft": ["WeaponPrevious"],
     "PadDpadRight": ["WeaponNext"],
     "PadLeftStickClick": ["Down"],
-    "PadRightStickClick": [],
+    "PadRightStickClick": ["RadioWheel", "WeaponWheel"],
 }
 
 DEFAULT_STICKS = {"LeftStick": "Move", "RightStick": "Camera"}

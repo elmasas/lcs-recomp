@@ -210,6 +210,11 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
         if (quality == "sharp" || quality == "xbrz") config.display.menu_art_quality = "auto";
         return;
     }
+    if (key == "radiowheelslowmotion") {
+        if (!parse_bool(value, config.display.radio_wheel_slow_motion))
+            warning(config, line, "Display.RadioWheelSlowMotion must be true or false");
+        return;
+    }
     if (key == "classicpause") {
         if (!parse_bool(value, config.display.classic_pause))
             warning(config, line, "Display.ClassicPause must be true or false");

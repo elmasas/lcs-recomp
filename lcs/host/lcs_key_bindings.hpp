@@ -78,6 +78,9 @@ enum class BindAction : std::uint8_t {
     Pause,
     Camera,
     Handbrake,
+    Horn,
+    RadioWheel,
+    WeaponWheel,
     Count,
 };
 
@@ -159,6 +162,9 @@ inline const char *bind_action_name(BindAction action) noexcept {
     case BindAction::Pause: return "Pause";
     case BindAction::Camera: return "Camera";
     case BindAction::Handbrake: return "Handbrake";
+    case BindAction::Horn: return "Horn";
+    case BindAction::RadioWheel: return "RadioWheel";
+    case BindAction::WeaponWheel: return "WeaponWheel";
     case BindAction::Count: return "";
     }
     return "";
@@ -175,10 +181,12 @@ inline std::uint32_t action_buttons(BindAction action, bool driving) noexcept {
     case BindAction::WeaponPrevious: return kPspLeft;
     case BindAction::WeaponNext: return kPspRight;
     case BindAction::Up: return kPspUp;
-    case BindAction::Down: return kPspDown;
+    // D-pad down is the horn in a vehicle. The Down key only pitches there (a wheelie on a bike), and Horn sounds it.
+    case BindAction::Down: return driving ? 0u : kPspDown;
     case BindAction::Pause: return kPspStart;
     case BindAction::Camera: return kPspSelect;
     case BindAction::Handbrake: return driving ? kPspRTrigger : 0u;
+    case BindAction::Horn: return driving ? kPspDown : 0u;
     default: return 0u;
     }
 }
@@ -210,6 +218,10 @@ inline ControlBindings default_control_bindings() {
     add(BindAction::Pause, {HostKey::Escape});
     add(BindAction::Camera, {HostKey::V});
     add(BindAction::Handbrake, {HostKey::Space});
+    add(BindAction::Horn, {HostKey::G});
+    // As in GTA V on PC: hold Q in a vehicle for the radio, hold Tab on foot for weapons.
+    add(BindAction::RadioWheel, {HostKey::Q});
+    add(BindAction::WeaponWheel, {HostKey::Tab});
     const auto add_pad = [&](PadButton button, std::initializer_list<BindAction> actions) {
         auto &count = bindings.pad_count[static_cast<std::size_t>(button)];
         for (const BindAction action : actions) {
@@ -232,6 +244,7 @@ inline ControlBindings default_control_bindings() {
     add_pad(PadButton::DpadLeft, {BindAction::WeaponPrevious});
     add_pad(PadButton::DpadRight, {BindAction::WeaponNext});
     add_pad(PadButton::LeftClick, {BindAction::Down});
+    add_pad(PadButton::RightClick, {BindAction::RadioWheel, BindAction::WeaponWheel});  // one button, as GTA V's LB
     return bindings;
 }
 
@@ -379,6 +392,9 @@ inline bool lookup_bind_action(std::string_view name, BindAction &action) noexce
         {"select", BindAction::Camera},
         {"changecamera", BindAction::Camera},
         {"handbrake", BindAction::Handbrake},
+        {"horn", BindAction::Horn},
+        {"radiowheel", BindAction::RadioWheel},
+        {"weaponwheel", BindAction::WeaponWheel},
     };
     for (const Alias &alias : kAliases) {
         if (name == alias.name) {
@@ -620,6 +636,7 @@ inline bool pad_button_is_trigger(PadButton button) noexcept {
 
 inline std::uint32_t pad_action_buttons(BindAction action) noexcept {
     if (action == BindAction::Handbrake) return kPspRTrigger;
+    if (action == BindAction::Horn) return kPspDown;
     return action_buttons(action, false);
 }
 

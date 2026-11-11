@@ -3,6 +3,8 @@
 #include "lcs_frontend_menu.hpp"
 #include "lcs_frontend_options.hpp"
 #include "lcs_pause_menu.hpp"
+#include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "lcs_save_slots.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_state.hpp"
@@ -2003,6 +2005,11 @@ bool state_hotkey_allowed() noexcept {
         host_toast("CLOSE THE MENU");
         return false;
     }
+    // A wheel slows the game while it's open: a state taken then would load in slow motion for good.
+    if (weapon_wheel_open() || radio_wheel_open()) {
+        host_toast("CLOSE THE WHEEL");
+        return false;
+    }
     return true;
 }
 }  // namespace
@@ -3400,6 +3407,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             std::uint8_t analog_y = host.analog_y;
             std::uint32_t buttons = frontend_boot_pad(trainer_pad_buttons(host.buttons, analog_x, analog_y));
             buttons = pause_menu_game_tick(rt, buttons);
+            buttons = radio_wheel_game_tick(rt, buttons);
+            buttons = weapon_wheel_game_tick(rt, buttons);
             if (perf::g_enabled) note_player_for_metrics(rt);
             // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.
             static bool slots_held = false;

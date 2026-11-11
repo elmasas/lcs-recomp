@@ -1258,7 +1258,7 @@ std::chrono::steady_clock::time_point g_state_auto_last = std::chrono::steady_cl
 // is waiting for a choice there), and not during a movie (save_state refuses that).
 bool state_auto_allowed() {
     return !frontend_menu_active() && !lcs_menu_active() && !host_settings_open() && !save_slots_open() &&
-           !pause_menu_visible() && lcs_camera_in_use();
+           !pause_menu_visible() && lcs_camera_in_use() && !weapon_wheel_open() && !radio_wheel_open();  // a wheel slows the game
 }
 
 // Every Display.AutoStateMinutes of play (LCS_TEST_STATE_AUTO_SECONDS in tests), the oldest automatic slot is replaced.
