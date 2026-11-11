@@ -6,12 +6,23 @@ list(REMOVE_ITEM HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/host/pack_font5x7.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/host/main.cpp)
 # Share the real HLE implementations with the save-protection integration test.
+if(WIN32)
+    set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+    list(APPEND HOST_SOURCES
+        ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp ${IMGUI_DIR}/backends/imgui_impl_win32.cpp)
+else()
+    # The settings menu is DX12 only: other builds keep the simple overlay in lcs_display_menu.cpp.
+    list(REMOVE_ITEM HOST_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/host/lcs_settings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/host/lcs_settings_menu.cpp)
+endif()
 add_library(lcs_host OBJECT ${HOST_SOURCES})
 add_executable(LCSNative host/main.cpp)
 target_link_libraries(LCSNative PRIVATE lcs_host)
 target_include_directories(lcs_host PUBLIC host)
 if(WIN32)
-    target_include_directories(lcs_host PRIVATE ${FFMPEG_DIR}/include)
+    target_include_directories(lcs_host PRIVATE ${FFMPEG_DIR}/include ${IMGUI_DIR})
 endif()
 target_link_libraries(lcs_host PUBLIC psprecomp_core)
 

@@ -25,8 +25,9 @@ sector swaps.
 The frame log (`lcs/host/lcs_perf_log.*`), the sampling profiler (`lcs/host/lcs_profiler.*`), the crash reporter
 (`lcs/host/lcs_crash.*`) and the cruise rig in `lcs/host/lcs_stress_test.cpp` follow ideas from VCS Recomp
 (`gothamor/gta-vcs-recomp`): a per-frame timing log, a sampling profiler of the game's threads, a crash report with
-the reason and the call stack, and a scripted route for stutter tests. No code from VCS
-Recomp is used.
+the reason and the call stack, and a scripted route for stutter tests. The options list the menu is drawn from
+(`lcs/host/lcs_settings.*`) follows VCS Recomp's idea of one registry of typed settings that the menu is generated from;
+its interface and code are this project's own. No code from VCS Recomp is used.
 
 The ground lights of street lamps reach further through the distance the game passes to `CShadows::StoreStaticShadow`
 (`lcs/generated/generated_unit_0125.cpp`), and past that, flat patches from `lcs/host/lcs_lod_lights.cpp`.

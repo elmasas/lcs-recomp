@@ -7,9 +7,10 @@
 #include "lcs_mouse.hpp"
 #include "lcs_controls.hpp"
 #include "lcs_display_menu.hpp"
+#include "lcs_perf_log.hpp"
+#include "lcs_imgui_menu.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_key_bindings.hpp"
-#include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
 
 #if defined(_WIN32)
@@ -292,17 +293,11 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             host_settings_note_fullscreen(g_fullscreen);
             return 0;
         }
-        if (host_settings_open()) {
-            if (wparam == VK_UP) host_settings_handle(HostSettingsKey::Up);
-            else if (wparam == VK_DOWN) host_settings_handle(HostSettingsKey::Down);
-            else if (wparam == VK_LEFT) host_settings_handle(HostSettingsKey::Left);
-            else if (wparam == VK_RIGHT) host_settings_handle(HostSettingsKey::Right);
-            else if (wparam == VK_ESCAPE && !repeat) {
-                host_settings_handle(HostSettingsKey::Close);
-                discard_pending_pointer();
-            }
-            return 0;
-        }
+    }
+    // The open menu takes the keyboard and mouse. Only keys it consumes stop here: the rest still reach Windows.
+    if (imgui_menu_note_message(hwnd, message, wparam, lparam)) {
+        discard_pending_pointer();
+        return 0;
     }
     if (message == WM_ACTIVATE) {
         update_cursor_clip(hwnd, LOWORD(wparam) != WA_INACTIVE && HIWORD(wparam) == 0);
@@ -334,6 +329,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             }
         }
         return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+    if (message == WM_SETCURSOR && LOWORD(lparam) == HTCLIENT && host_settings_open()) {
+        SetCursor(LoadCursorA(nullptr, IDC_ARROW));
+        return TRUE;
     }
     if (message == WM_SETCURSOR && LOWORD(lparam) == HTCLIENT && !lcs_menu_active()) {
         SetCursor(nullptr);
@@ -666,7 +665,21 @@ HostInputState display_window_input() {
             if (mark && !mark_was) (void)perf::mark();
             mark_was = mark;
         }
-        const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
+        static MenuKeyFilter menu_keys;
+        const bool game_menu = lcs_menu_active();
+        const bool gameplay = (lcs_camera_in_use() || !lcs_camera_hook_enabled());
+        const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, game_menu, gameplay, is_down);
+        if (!test_keys.empty()) {
+            static std::uint32_t last_buttons = 0xFFFFFFFFu;
+            static bool last_menu = false;
+            static bool last_gameplay = false;
+            if (keys.buttons != last_buttons || game_menu != last_menu || gameplay != last_gameplay) {
+                last_gameplay = gameplay;
+                std::cerr << "[menu-keys] t=" << test_now << " menu=" << game_menu << " gameplay=" << gameplay << " buttons=0x" << std::hex << keys.buttons << std::dec << "\n";
+                last_buttons = keys.buttons;
+                last_menu = game_menu;
+            }
+        }
         input.buttons |= keys.buttons;
         input.accelerate = keys.accelerate;
         input.brake = keys.brake;

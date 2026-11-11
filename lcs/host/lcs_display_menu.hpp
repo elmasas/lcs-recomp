@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace lcs {
 
@@ -23,6 +24,8 @@ struct HostSettingsView {
 [[nodiscard]] bool host_settings_open() noexcept;
 bool host_settings_handle(HostSettingsKey key) noexcept;
 void host_settings_note_fullscreen(bool enabled) noexcept;
+// Updates one value in LCSNative.ini, keeping the rest of the file. Any thread.
+void host_settings_write(const std::string &section, const std::string &key, const std::string &value);
 [[nodiscard]] HostSettingsView host_settings_view() noexcept;
 
 // Win32 message and virtual-key values, named here so the window procedure

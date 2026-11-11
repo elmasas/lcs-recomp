@@ -4739,11 +4739,24 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
         }
 
         if (hud_candidate && !full_width && hud.shrink != 1.0f) {
+            // Display.HudAtEdges: what sits wholly on one side goes out to that edge. What crosses the middle stays.
+            float edge_shift = 0.0f;
+            if (lcs_render_configuration().display.hud_at_edges && !lcs_menu_command() && !vertices.empty()) {
+                float low = vertices.front().x, high = vertices.front().x;
+                for (const Vertex &vertex : vertices) {
+                    low = std::min(low, vertex.x);
+                    high = std::max(high, vertex.x);
+                }
+                const float margin = hud.source_center * 0.15f;
+                const float outward = hud.source_center * (1.0f - 1.0f / hud.shrink);
+                if (high < hud.source_center - margin) edge_shift = -outward;
+                else if (low > hud.source_center + margin) edge_shift = outward;
+            }
             for (Vertex &vertex : vertices)
-                vertex.x = hud.source_center + (vertex.x - hud.source_center) / hud.shrink;
+                vertex.x = hud.source_center + (vertex.x - hud.source_center) / hud.shrink + edge_shift;
             const auto shrink_scissor = [&](std::int32_t value, bool leading) {
                 const float moved = hud.source_center +
-                    (static_cast<float>(value) - hud.source_center) / hud.shrink;
+                    (static_cast<float>(value) - hud.source_center) / hud.shrink + edge_shift;
                 return static_cast<std::int32_t>(leading ? std::ceil(moved)
                                                          : std::floor(moved));
             };

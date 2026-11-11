@@ -2,6 +2,7 @@
 #include "ge_gpu_backend.hpp"
 #include "ge_present_shader.hpp"
 #include "lcs_display_menu.hpp"
+#include "lcs_imgui_menu.hpp"
 #include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
 
@@ -2244,9 +2245,10 @@ bool record_direct_present(Dx12GeState &s, Dx12FramebufferTarget &source,
     s.list->DrawInstanced(3u, 1u, 0u, 0u);
     host_fps_note_presented_frame();
     if (decision.composite_fps) composite_fps_overlay(s);
-    if (decision.composite_settings) composite_settings_overlay(s, decision.settings);
+    (void)decision.settings;
+    imgui_menu_record(s.device.Get(), s.queue.Get(), s.list.Get(), s.native_window, kColorFormat, kFrameCount);
     if (test_shot_due()) {
-        // LCS_TEST_SHOT_DIR: the back buffer as shown, for unattended checks.
+        // LCS_TEST_SHOT_DIR: the back buffer as shown, menu included, for unattended checks.
         transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
         record_test_shot(s, backbuffer);
         transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);

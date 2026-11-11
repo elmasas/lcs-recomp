@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <functional>
 #include <vector>
 
 namespace lcs {
@@ -52,6 +53,7 @@ struct DisplayConfiguration {
     bool show_fps{false};
     bool vsync{false};
     float hud_scale{1.0f};
+    bool hud_at_edges{false};
     // Pictures shown by the game's button prompts: "original" or a folder name
     // under <config dir>/textures.
     std::string prompt_style{"original"};
@@ -86,6 +88,8 @@ struct DisplaySurfaceDimensions {
 // Called by the distant lights (lcs_lod_lights.cpp) when they turn themselves off after a failed call.
 void note_lod_lights_off() noexcept;
 
+// Changes the running configuration under its lock.
+void lcs_update_configuration(const std::function<void(struct LcsConfiguration &)> &change);
 void lcs_set_view_distance(float value) noexcept;
 void lcs_set_fullscreen_setting(bool enabled) noexcept;
 void lcs_set_show_fps(bool enabled) noexcept;
