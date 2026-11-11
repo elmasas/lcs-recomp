@@ -54,6 +54,8 @@ struct DisplayConfiguration {
     bool vsync{false};
     float hud_scale{1.0f};
     bool hud_at_edges{false};
+    // Minutes between automatic save states (lcs_state.hpp); 0 turns them off.
+    std::uint32_t auto_state_minutes{0u};  // off unless the player turns it on
     // Pictures shown by the game's button prompts: "original" or a folder name
     // under <config dir>/textures.
     std::string prompt_style{"original"};

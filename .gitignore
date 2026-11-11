@@ -11,3 +11,5 @@
 *.spec
 /lcs/config/textures/
 /lcs/scripts/__pycache__/
+# Save states hold the game's memory: never publish them
+STATES/

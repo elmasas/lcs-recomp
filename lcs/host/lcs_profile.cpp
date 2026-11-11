@@ -1,5 +1,9 @@
 // LCS (GTA: Liberty City Stories) kernel HLE.
 
+#include "lcs_display_menu.hpp"
+#include "lcs_state.hpp"
+#include "lcs_state_io.hpp"
+#include "lcs_texture_pack.hpp"
 #include "lcs_profile.hpp"
 #include "display_window.hpp"
 #include "lcs_ge_exec.hpp"
@@ -11,6 +15,7 @@
 #include "lcs_fps_overlay.hpp"
 #include "lcs_frame_limit.hpp"
 #include "lcs_lang.hpp"
+#include "lcs_controls.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
@@ -199,6 +204,7 @@ struct PendingGeCallback {
 };
 
 struct DirectoryHandle {
+    std::filesystem::path path;  // kept so that a save state can list it again
     std::vector<std::filesystem::directory_entry> entries;
     std::size_t index{};
 };
@@ -210,6 +216,17 @@ std::string disc_directory_name(const std::filesystem::path &path) {
         if (ch >= 'a' && ch <= 'z') ch = static_cast<char>(ch - 'a' + 'A');
     }
     return name;
+}
+
+// A directory's entries, in the order the game sees them (also used to list one again when loading a save state).
+DirectoryHandle list_directory(const std::filesystem::path &native) {
+    DirectoryHandle handle;
+    handle.path = native;
+    for (const auto &entry : std::filesystem::directory_iterator(native)) handle.entries.push_back(entry);
+    std::sort(handle.entries.begin(), handle.entries.end(), [](const auto &a, const auto &b) {
+        return disc_directory_name(a.path()) < disc_directory_name(b.path());
+    });
+    return handle;
 }
 
 struct RawSectorFile {
@@ -229,9 +246,16 @@ struct VirtualDiscHandle {
     std::uint64_t position{};
 };
 
+// Where an open stream came from, so that a save state can reopen it.
+struct OpenFileInfo {
+    std::filesystem::path path;
+    int mode{};
+};
+
 struct FileTable {
     std::int32_t next_fd{3};
     std::unordered_map<std::int32_t, std::fstream> files;
+    std::unordered_map<std::int32_t, OpenFileInfo> open_info;
     std::unordered_map<std::int32_t, DirectoryHandle> directories;
     std::unordered_map<std::int32_t, RawSectorFile> raw_sector_files;
     std::uint32_t next_virtual_sector{32u};
@@ -1930,7 +1954,10 @@ void check_wall_clock_limit(psprecomp::Runtime &runtime, std::uint64_t sample_ma
     runtime.stop("Wall-clock limit reached at " + psprecomp::hex32(runtime.cpu().pc));
 }
 
+#include "lcs_profile_state.inc"
+
 void lcs_starvation_tick(psprecomp::Runtime &starvation_runtime, psprecomp::AllegrexContext &ctx) {
+    state_poll(starvation_runtime, ctx);
     virtual_time_us += starvation_tick_microseconds;
     promote_expired_delays();
 
@@ -1946,6 +1973,81 @@ void lcs_starvation_tick(psprecomp::Runtime &starvation_runtime, psprecomp::Alle
     (void)activate_next_thread(ctx, "timer-preempt");
 }
 
+}
+
+void lcs_state_request_save(int slot) noexcept { g_state_request.store(slot + 1); }
+void lcs_state_request_load(int slot) noexcept { g_state_request.store(-(slot + 1)); }
+
+namespace {
+constexpr int kStateSlots = kStateManualSlots;  // what F6 cycles through
+std::atomic<int> g_state_slot{0};
+
+bool state_hotkey_allowed() noexcept {
+    if (host_settings_open()) {
+        host_toast("CLOSE THE MENU");
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
+StateSlotInfo lcs_state_slot_info(int slot) noexcept {
+    StateSlotInfo info;
+    if (slot < 0 || slot >= kStateSlotCount) return info;
+    std::error_code ec;
+    const auto time = std::filesystem::last_write_time(state_file(slot), ec);
+    if (ec) return info;
+    info.used = true;
+    info.saved_unix = std::chrono::duration_cast<std::chrono::seconds>(
+                          std::chrono::clock_cast<std::chrono::system_clock>(time).time_since_epoch())
+                          .count();
+    return info;
+}
+
+std::string lcs_state_slot_label(int slot) {
+    return slot >= kStateManualSlots ? "Auto " + std::to_string(slot - kStateManualSlots + 1)
+                                     : "Slot " + std::to_string(slot + 1);
+}
+
+// The newest state of all, the automatic ones included (the main menu's Load State).
+int lcs_state_latest_slot() noexcept {
+    int best = -1;
+    std::filesystem::file_time_type best_time{};
+    for (int slot = 0; slot < kStateSlotCount; ++slot) {
+        std::error_code ec;
+        const auto time = std::filesystem::last_write_time(state_file(slot), ec);
+        if (ec) continue;
+        if (best < 0 || time > best_time) {
+            best = slot;
+            best_time = time;
+        }
+    }
+    if (best >= 0 && best < kStateSlots) g_state_slot.store(best);
+    return best;
+}
+
+void lcs_state_hotkey_save() noexcept {
+    if (state_hotkey_allowed()) lcs_state_request_save(g_state_slot.load());
+}
+
+void lcs_state_hotkey_next_slot() noexcept {
+    const int slot = (g_state_slot.load() + 1) % kStateSlots;
+    g_state_slot.store(slot);
+    char text[40];
+    std::snprintf(text, sizeof text, "SLOT %d%s", slot + 1, std::filesystem::exists(state_file(slot)) ? " USED" : "");
+    host_toast(text);
+}
+
+void lcs_state_hotkey_load() noexcept {
+    if (!state_hotkey_allowed()) return;
+    const int slot = g_state_slot.load();
+    if (!std::filesystem::exists(state_file(slot))) {
+        char text[40];
+        std::snprintf(text, sizeof text, "NO STATE SLOT %d", slot + 1);
+        host_toast(text);
+        return;
+    }
+    lcs_state_request_load(slot);
 }
 
 void set_wall_clock_limit(double seconds) {
@@ -2955,6 +3057,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                             if (stream) {
                                 const auto fd = file_table.next_fd++;
                                 file_table.files.emplace(fd, std::move(stream));
+                                file_table.open_info[fd] = OpenFileInfo{disc_file->native_path, static_cast<int>(std::ios::binary | std::ios::in)};
                                 file_table.raw_sector_files.emplace(
                                     fd, RawSectorFile{0ull, disc_file->size});
                                 ctx.set_gpr(2, static_cast<std::uint32_t>(fd));
@@ -2983,6 +3086,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
             const auto fd = file_table.next_fd++;
             file_table.files.emplace(fd, std::move(stream));
+            file_table.open_info[fd] = OpenFileInfo{native, static_cast<int>(mode)};
             ctx.set_gpr(2, static_cast<std::uint32_t>(fd));
         });
 
@@ -2990,6 +3094,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
             const auto fd = static_cast<std::int32_t>(ctx.gpr[4]);
             file_table.raw_sector_files.erase(fd);
+            file_table.open_info.erase(fd);
             if (file_table.virtual_disc_handles.erase(fd) == 1u) {
                 ctx.set_gpr(2, 0u);
                 return;
@@ -3192,11 +3297,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                     ctx.set_gpr(2, 0x80010002u);
                     return;
                 }
-                DirectoryHandle handle;
-                for (const auto &entry : std::filesystem::directory_iterator(native)) handle.entries.push_back(entry);
-                std::sort(handle.entries.begin(), handle.entries.end(), [](const auto &a, const auto &b) {
-                    return disc_directory_name(a.path()) < disc_directory_name(b.path());
-                });
+                DirectoryHandle handle = list_directory(native);
                 const auto fd = file_table.next_fd++;
                 file_table.directories.emplace(fd, std::move(handle));
                 ctx.set_gpr(2, static_cast<std::uint32_t>(fd));

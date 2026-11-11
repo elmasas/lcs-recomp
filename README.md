@@ -32,6 +32,12 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## Save states
+
+Like an emulator's save states, and apart from the game's own saves: F5 saves the whole game at once, F6 picks the next of 5 slots, F7 loads the chosen slot. A short message shows in the corner. States are files in `lcs/game/STATES/`, or `game/STATES/` in a release, and each is about 30 MB because it holds the game's memory, so share none and publish none. A state works across restarts, but not across a new version of the game that changes what a state holds (it says so instead of loading). F5 and F7 don't work during a movie or while a menu is open.
+
+The game can also save a state on its own every few minutes of play, into Auto 1 to 3, replacing the oldest, so a crash costs at most a few minutes; the game pauses for about a frame while it does. It's off unless you turn it on: F10, Game, Save states, Automatic state (or `AutoStateMinutes=` under `[Display]`, from 1 to 60). The game's own saving is untouched, and still the safer record of your progress.
+
 ## Texture packs
 
 PPSSPP texture packs work. None is included: packs are made from the game's own art, so, like the game, you get them yourself, from their authors.

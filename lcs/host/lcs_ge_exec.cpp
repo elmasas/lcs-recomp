@@ -156,6 +156,58 @@ GeListPrescan prescan_ge_list(psprecomp::GuestMemory &memory, std::uint32_t list
     return result;
 }
 
+namespace {
+// A parsed state, applied by ge_exec_commit_state.
+struct GeExecState {
+    std::array<std::uint32_t, 256> commands{};
+    GeTransformState transform{};
+    std::uint32_t base{}, offset{}, vertex{}, index{};
+    bool finish_seen{};
+    std::uint32_t finish_arg{};
+};
+GeExecState ge_pending_state{};
+}  // namespace
+
+void ge_exec_write_state(state::Writer &out) {
+    out.u32(static_cast<std::uint32_t>(sizeof(GeTransformState)));  // raw below: a different layout can't load
+    out.pod(ge_commands);
+    out.pod(ge_transform);
+    out.u32(ge_base_register);
+    out.u32(ge_offset_address);
+    out.u32(ge_vertex_address);
+    out.u32(ge_index_address);
+    out.boolean(ge_finish_seen);
+    out.u32(ge_finish_arg);
+}
+
+bool ge_exec_parse_state(state::Reader &in) {
+    if (in.u32() != sizeof(GeTransformState)) return false;
+    GeExecState s;
+    s.commands = in.pod<std::array<std::uint32_t, 256>>();
+    s.transform = in.pod<GeTransformState>();
+    s.base = in.u32();
+    s.offset = in.u32();
+    s.vertex = in.u32();
+    s.index = in.u32();
+    s.finish_seen = in.boolean();
+    s.finish_arg = in.u32();
+    if (!in.ok()) return false;
+    ge_pending_state = s;
+    return true;
+}
+
+void ge_exec_commit_state() {
+    const GeExecState &s = ge_pending_state;
+    ge_commands = s.commands;
+    ge_transform = s.transform;
+    ge_base_register = s.base;
+    ge_offset_address = s.offset;
+    ge_vertex_address = s.vertex;
+    ge_index_address = s.index;
+    ge_finish_seen = s.finish_seen;
+    ge_finish_arg = s.finish_arg;
+}
+
 bool rendered_list_finished() { return ge_finish_seen; }
 std::uint32_t rendered_finish_argument() { return ge_finish_arg; }
 

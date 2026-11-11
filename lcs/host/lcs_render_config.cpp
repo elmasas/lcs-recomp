@@ -194,6 +194,11 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Display.HudScale must be between 0.25 and 1.0");
         return;
     }
+    if (key == "autostateminutes") {
+        if (!parse_u32(value, 0u, 60u, config.display.auto_state_minutes))
+            warning(config, line, "Display.AutoStateMinutes must be 0 (off) to 60");
+        return;
+    }
     if (key == "hudatedges") {
         if (!parse_bool(value, config.display.hud_at_edges))
             warning(config, line, "Display.HudAtEdges must be true or false");

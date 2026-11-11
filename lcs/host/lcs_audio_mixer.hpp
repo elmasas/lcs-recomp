@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <span>
@@ -111,6 +112,16 @@ public:
     void advance(std::uint64_t guest_time_us, Device &device) {
         if (!opened_) return;
         advance_locked(guest_time_us, device);
+    }
+
+    // The game's clock jumped (a save state was loaded): start the timeline again from the next sound, as at start-up.
+    // Without this, a jump back leaves every new sound scheduled before what was already played, so nothing plays until
+    // the game's clock gets back to where it was.
+    void restart_timeline() {
+        std::fill(ring_.begin(), ring_.end(), 0);
+        timeline_anchored_ = false;
+        output_frame_ = 0u;
+        for (std::uint32_t channel = 0u; channel < kGuestChannels; ++channel) reset_channel(channel);
     }
 
     void reset_channel(std::uint32_t channel) {

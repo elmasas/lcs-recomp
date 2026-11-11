@@ -36,3 +36,7 @@ Free aim (`lcs/host/lcs_controls.cpp`, generated units 0059, 0063, 0080, 0081, 0
 Axis for GTA III and Vice City (gennariarmando) and Void Ultimate Aim System for San Andreas (VoidTheMage), no code
 copied: aiming only while the aim button is held, the crosshair only then, the game's own strafe walks, and a camera
 over the shoulder that only the mouse turns.
+
+Save states (`lcs/host/lcs_profile_state.inc`, `lcs_state.hpp`, `lcs_state_io.hpp`) follow the idea of an emulator's save
+states, as in PPSSPP, with the F5/F7 keys many emulators use. No code is taken from any emulator: the format and what it
+saves are this project's own.

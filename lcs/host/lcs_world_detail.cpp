@@ -525,6 +525,47 @@ void add_relocations(std::uint8_t *data, const std::vector<std::uint32_t> &reloc
 
 void reset_world_detail() { loaded.clear(); pending_refresh.clear(); }
 
+void world_detail_write_state(state::Writer &out) {
+    out.u32(static_cast<std::uint32_t>(sizeof(LoadedSector)));  // raw below: a different layout can't load
+    out.u32(static_cast<std::uint32_t>(loaded.size()));
+    for (const auto &[key, sector] : loaded) {
+        out.u32(key);
+        out.pod(sector);
+    }
+    out.u32(static_cast<std::uint32_t>(pending_refresh.size()));
+    for (const std::uint32_t world : pending_refresh) out.u32(world);
+}
+
+namespace {
+// A parsed state, applied by world_detail_commit_state.
+std::map<std::uint32_t, LoadedSector> pending_loaded;
+std::set<std::uint32_t> pending_pending_refresh;
+}  // namespace
+
+bool world_detail_parse_state(state::Reader &in) {
+    if (in.u32() != sizeof(LoadedSector)) return false;
+    std::map<std::uint32_t, LoadedSector> sectors;
+    std::set<std::uint32_t> pending;
+    const std::uint32_t count = in.u32();
+    for (std::uint32_t i = 0; in.ok() && i < count; ++i) {
+        const std::uint32_t key = in.u32();
+        sectors[key] = in.pod<LoadedSector>();
+    }
+    const std::uint32_t pending_count = in.u32();
+    for (std::uint32_t i = 0; in.ok() && i < pending_count; ++i) pending.insert(in.u32());
+    if (!in.ok()) return false;
+    pending_loaded = std::move(sectors);
+    pending_pending_refresh = std::move(pending);
+    return true;
+}
+
+void world_detail_commit_state() {
+    loaded = std::move(pending_loaded);
+    pending_refresh = std::move(pending_pending_refresh);
+    pending_loaded.clear();
+    pending_pending_refresh.clear();
+}
+
 bool expand_world_sector(psprecomp::Runtime &runtime, std::uint32_t world,
                          std::uint32_t header, std::uint32_t address) {
     const perf::Scope perf_scope(perf::kWorldUs);
