@@ -295,11 +295,35 @@ Win32HostKeyDecision classify_win32_host_key(std::uint32_t message, std::uint32_
     return decision;
 }
 
+namespace {
+std::mutex g_toast_mutex;
+char g_toast_text[40]{};
+std::chrono::steady_clock::time_point g_toast_until{};
+
+bool toast_copy(char *out, std::size_t size) noexcept {
+    std::lock_guard lock(g_toast_mutex);
+    if (std::chrono::steady_clock::now() >= g_toast_until || g_toast_text[0] == '\0') return false;
+    std::snprintf(out, size, "%s", g_toast_text);
+    return true;
+}
+}  // namespace
+
+void host_toast(const char *text) noexcept {
+    std::lock_guard lock(g_toast_mutex);
+    std::snprintf(g_toast_text, sizeof g_toast_text, "%s", text != nullptr ? text : "");
+    g_toast_until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+}
+
+bool host_toast_active() noexcept {
+    std::lock_guard lock(g_toast_mutex);
+    return std::chrono::steady_clock::now() < g_toast_until && g_toast_text[0] != '\0';
+}
+
 Dx12FramePresentDecision decide_dx12_frame_present(bool direct_presentation_possible) noexcept {
     Dx12FramePresentDecision decision{};
     decision.composite_settings = host_settings_open();
     if (decision.composite_settings) decision.settings = host_settings_view();
-    decision.composite_fps = lcs_render_configuration().display.show_fps;
+    decision.composite_fps = lcs_render_configuration().display.show_fps || host_toast_active();
     decision.present_directly = direct_presentation_possible;
     decision.map_full_frame_readback = !direct_presentation_possible;
     return decision;
@@ -407,6 +431,11 @@ void rasterize_fps_overlay(std::uint8_t *rgba, std::uint32_t width,
     std::memset(rgba, 0, static_cast<std::size_t>(width) * height * 4u);
     overlay_fill(rgba, width, height, 0, 0, static_cast<int>(width), static_cast<int>(height),
                  8u, 12u, 28u, 210u);
+    char toast[40];
+    if (toast_copy(toast, sizeof(toast))) {
+        overlay_text(rgba, width, height, 8, 16, 2, toast, 255u, 236u, 160u);
+        return;
+    }
     char label[24];
     host_fps_format(label, sizeof(label));
     overlay_text(rgba, width, height, 8, 12, 3, label, 232u, 248u, 255u);

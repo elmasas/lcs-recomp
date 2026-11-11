@@ -9,6 +9,7 @@
 #include "lcs_display_menu.hpp"
 #include "lcs_perf_log.hpp"
 #include "lcs_imgui_menu.hpp"
+#include "lcs_state.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_key_bindings.hpp"
 #include "lcs_render_config.hpp"
@@ -659,10 +660,18 @@ HostInputState display_window_input() {
             const int virtual_key = win32_virtual_key(key);
             return virtual_key != 0 && key_down(virtual_key);
         };
-        {   // With metrics on: the Pause key marks a stutter the player felt, for the report.
+        {   // Save-state keys: one action per press.
+            static bool f5_was = false, f6_was = false, f7_was = false;
+            const bool f5 = is_down(HostKey::F5), f6 = is_down(HostKey::F6), f7 = is_down(HostKey::F7);
+            if (f5 && !f5_was) lcs_state_hotkey_save();
+            if (f6 && !f6_was) lcs_state_hotkey_next_slot();
+            if (f7 && !f7_was) lcs_state_hotkey_load();
+            f5_was = f5; f6_was = f6; f7_was = f7;
+            // With metrics on: the Pause key marks a stutter the player felt, for the report. Away from F5-F7, so that it
+            // isn't pressed by mistake for a state key.
             static bool mark_was = false;
             const bool mark = test_keys.empty() && key_down(VK_PAUSE);
-            if (mark && !mark_was) (void)perf::mark();
+            if (mark && !mark_was && perf::mark()) host_toast("Stutter marked");
             mark_was = mark;
         }
         static MenuKeyFilter menu_keys;

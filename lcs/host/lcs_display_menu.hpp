@@ -70,6 +70,10 @@ void rasterize_settings_overlay(const HostSettingsView &view, std::uint8_t *rgba
                                 std::uint32_t width, std::uint32_t height) noexcept;
 
 void host_fps_note_presented_frame() noexcept;
+
+// A short message in the corner of the picture (save states use it): shown for about three seconds.
+void host_toast(const char *text) noexcept;
+[[nodiscard]] bool host_toast_active() noexcept;
 void host_fps_format(char *label, std::size_t size) noexcept;
 void rasterize_fps_overlay(std::uint8_t *rgba, std::uint32_t width,
                            std::uint32_t height) noexcept;

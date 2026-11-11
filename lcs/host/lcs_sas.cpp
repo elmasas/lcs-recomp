@@ -100,6 +100,67 @@ struct SasState {
 
 SasState sas_state{};
 
+SasState sas_pending_state{};
+
+}  // namespace
+
+void sas_write_state(state::Writer &out) {
+    const SasState &s = sas_state;
+    out.boolean(s.initialized);
+    out.u32(s.core_address);
+    out.u32(s.grain_size);
+    out.u32(s.max_voices);
+    out.u32(s.output_mode);
+    out.u32(s.sample_rate);
+    for (const SasVoiceState &voice : s.voices) out.pod(voice);
+    const SasReverbState &r = s.reverb;
+    out.i32(r.type);
+    out.i32(r.delay);
+    out.i32(r.feedback);
+    out.u32(r.left_volume);
+    out.u32(r.right_volume);
+    out.boolean(r.dry);
+    out.boolean(r.wet);
+    out.u64(r.history_cursor);
+    out.u32(static_cast<std::uint32_t>(r.history_left.size()));
+    if (!r.history_left.empty()) out.bytes(r.history_left.data(), r.history_left.size() * sizeof(std::int32_t));
+    out.u32(static_cast<std::uint32_t>(r.history_right.size()));
+    if (!r.history_right.empty()) out.bytes(r.history_right.data(), r.history_right.size() * sizeof(std::int32_t));
+}
+
+bool sas_parse_state(state::Reader &in) {
+    SasState s{};
+    s.initialized = in.boolean();
+    s.core_address = in.u32();
+    s.grain_size = in.u32();
+    s.max_voices = in.u32();
+    s.output_mode = in.u32();
+    s.sample_rate = in.u32();
+    for (SasVoiceState &voice : s.voices) voice = in.pod<SasVoiceState>();
+    SasReverbState &r = s.reverb;
+    r.type = in.i32();
+    r.delay = in.i32();
+    r.feedback = in.i32();
+    r.left_volume = in.u32();
+    r.right_volume = in.u32();
+    r.dry = in.boolean();
+    r.wet = in.boolean();
+    r.history_cursor = static_cast<std::size_t>(in.u64());
+    for (std::vector<std::int32_t> *history : {&r.history_left, &r.history_right}) {
+        const std::uint32_t count = in.u32();
+        if (!in.ok() || count > (1u << 24) || static_cast<std::size_t>(count) * sizeof(std::int32_t) > in.remaining()) return false;
+        history->resize(count);
+        if (count != 0u) in.bytes(history->data(), static_cast<std::size_t>(count) * sizeof(std::int32_t));
+    }
+    if (!in.ok()) return false;
+    sas_pending_state = std::move(s);
+    return true;
+}
+
+void sas_commit_state() { sas_state = std::move(sas_pending_state); sas_pending_state = SasState{}; }
+
+namespace {
+
 constexpr std::uint32_t kSasErrorInvalidGrain = 0x80420001u;
 constexpr std::uint32_t kSasErrorInvalidMaxVoices = 0x80420002u;
 constexpr std::uint32_t kSasErrorInvalidOutputMode = 0x80420003u;

@@ -439,6 +439,16 @@ void register_settings() {
     opts::declare(s);
 
     s = {};
+    s.id = "display.AutoStateMinutes"; s.tab = "Game"; s.group = "Save states"; s.title = "Automatic state";
+    s.about = "Saves a state every few minutes into Auto 1-3, replacing the oldest.";
+    s.kind = Kind::List; s.fallback = 5;
+    s.entries = {{"Off", 0}, {"Every 2 minutes", 2}, {"Every 5 minutes", 5}, {"Every 10 minutes", 10}, {"Every 15 minutes", 15}};
+    s.get_value = [] { return static_cast<int>(config().display.auto_state_minutes); };
+    s.store = [](int v) { host_settings_write("display", "AutoStateMinutes", std::to_string(v)); };
+    s.take = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.auto_state_minutes = static_cast<std::uint32_t>(v); }); };
+    opts::declare(s);
+
+    s = {};
     s.id = "audio.Volume"; s.tab = "Game"; s.group = "Sound"; s.title = "Master volume";
     s.about = "All game audio. Above 100 boosts it and can distort."; s.kind = Kind::Number; s.lo = 0; s.hi = 200;
     s.fallback = 100; s.shown_as = "%d%%"; s.when = When::NextLaunch;

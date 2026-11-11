@@ -1,5 +1,7 @@
 #pragma once
 
+#include "lcs_state_io.hpp"
+
 #include <cstdint>
 #include <vector>
 
@@ -40,4 +42,7 @@ bool select_world_detail(psprecomp::Runtime &, std::uint32_t world);
 bool request_world_detail_refresh(psprecomp::Runtime &, std::uint32_t world, std::uint32_t render_pass);
 bool begin_world_detail_refresh(psprecomp::Runtime &, std::uint32_t world, std::uint32_t stack);
 void reset_world_detail();
+// Save states: which sectors are merged into memory (the merged data itself lives in the memory snapshot).
+void world_detail_write_state(state::Writer &out);
+bool world_detail_read_state(state::Reader &in);
 }

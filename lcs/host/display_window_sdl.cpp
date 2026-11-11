@@ -8,6 +8,7 @@
 #include "lcs_mouse.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_key_bindings.hpp"
+#include "lcs_state.hpp"
 #include "lcs_render_config.hpp"
 #include "host_font_5x7.hpp"
 
@@ -160,6 +161,12 @@ void pump_events() noexcept {
                 host_settings_handle(HostSettingsKey::Close);
                 discard_pending_pointer();
             }
+        } else if (event.type == SDL_KEYDOWN && event.key.repeat == 0 &&
+                   (event.key.keysym.scancode == SDL_SCANCODE_F5 || event.key.keysym.scancode == SDL_SCANCODE_F6 ||
+                    event.key.keysym.scancode == SDL_SCANCODE_F7)) {
+            if (event.key.keysym.scancode == SDL_SCANCODE_F5) lcs_state_hotkey_save();
+            else if (event.key.keysym.scancode == SDL_SCANCODE_F6) lcs_state_hotkey_next_slot();
+            else lcs_state_hotkey_load();
         } else if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_F11 &&
                  event.key.repeat == 0)
             toggle_fullscreen();
