@@ -8447,20 +8447,16 @@ L_089474DC:
     if (rt.invoke_chained_direct<&recomp_unit_0057_entry, 57u, 491u, 0x088EABACu>(ctx, &aot_mem) && ctx.pc == 0x089474E4u) goto L_089474E4;
     return;
 L_089474E4:
-    // Face the camera while firing a gun standing still.
+    // Free aim: with a gun, while the aim button (the pad's R, at +14; right mouse) is held. The player faces where the
+    // camera looks and the game takes its aim-in-place control (0x08943A74); sideways and backward walking go through the
+    // game's own strafe (generated unit 0081). Firing without aiming is the game's own.
     if (!lcs::lcs_auto_aim()) {
         const std::uint32_t weapon_type = aot_mem.aot_load32(
             ctx.gpr[16] + 1428u + static_cast<std::uint32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + 1720u))) * 28u);
         const bool gun = lcs::lcs_free_aim_weapon(weapon_type);
         bool aiming = false;
         if (gun && ctx.gpr[18] != 0u) {
-            AllegrexContext fire = ctx;
-            fire.gpr[4] = ctx.gpr[18];
-            fire.gpr[31] = 0u;
-            const float speed_x = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[16] + 112u));
-            const float speed_y = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[16] + 116u));
-            const bool standing = speed_x * speed_x + speed_y * speed_y < 0.0004f;
-            aiming = standing && rt.invoke_isolated_aot(0x08A98040u, fire) && fire.gpr[2] != 0u;
+            aiming = aot_mem.aot_load16(ctx.gpr[18] + 14u) != 0u;
         }
         lcs::lcs_set_free_aim(aiming);
         if (aiming) {
@@ -8471,7 +8467,7 @@ L_089474E4:
             aot_mem.aot_store32(ctx.gpr[16] + 1248u, heading);
             aot_mem.aot_store32(ctx.gpr[16] + 1252u, heading);
         }
-        ctx.gpr[2] = aiming ? 1u : 0u;
+        if (aiming) ctx.gpr[2] = 1u;  // not aiming: the game's own choice
     }
     { const bool branch_taken = ctx.gpr[2] == 0u;
     // nop

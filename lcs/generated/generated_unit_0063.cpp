@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_free_aim.hpp"
 #include "lcs_render_config.hpp"
 #include <bit>
 #include <cmath>
@@ -2907,6 +2908,24 @@ L_08901028:
     if (rt.invoke_chained_direct<&recomp_unit_0058_entry, 58u, 618u, 0x088EFCE0u>(ctx, &aot_mem) && ctx.pc == 0x08901050u) goto L_08901050;
     return;
 L_08901050:
+    { // Free aim: the follow camera (mode 4) over the right shoulder while aiming (lcs_free_aim_shoulder).
+        const std::uint32_t cam = ctx.gpr[16] + 400u + aot_mem.aot_load8(ctx.gpr[16] + 127u) * 656u;
+        const std::uint32_t target = aot_mem.aot_load32(cam + 596u);
+        if (static_cast<std::int16_t>(aot_mem.aot_load16(cam + 28u)) == 4 && target != 0u) {
+            const auto f = [&](std::uint32_t a) { return std::bit_cast<float>(aot_mem.aot_load32(a)); };
+            float source[3] = {f(cam + 432u), f(cam + 436u), f(cam + 440u)};
+            const float front[3] = {f(cam + 416u), f(cam + 420u), f(cam + 424u)};
+            const float player[3] = {f(target + 48u), f(target + 52u), f(target + 56u)};
+            float fov = f(cam + 196u);
+            if (lcs::lcs_free_aim_shoulder(source, front, player, fov)) {
+                for (std::uint32_t i = 0u; i < 3u; ++i) {
+                    aot_mem.aot_store32(cam + 432u + i * 4u, std::bit_cast<std::uint32_t>(source[i]));
+                    aot_mem.aot_store32(cam + 448u + i * 4u, std::bit_cast<std::uint32_t>(source[i]));
+                }
+                aot_mem.aot_store32(cam + 196u, std::bit_cast<std::uint32_t>(fov));
+            }
+        }
+    }
     ctx.gpr[4] = (aot_mem.aot_load8(ctx.gpr[16] + static_cast<std::uint32_t>(127)));
     ctx.gpr[4] = (ctx.gpr[4] << 4u);
     ctx.gpr[5] = (0u + ctx.gpr[4]);

@@ -30,3 +30,8 @@ Recomp is used.
 
 The ground lights of street lamps reach further through the distance the game passes to `CShadows::StoreStaticShadow`
 (`lcs/generated/generated_unit_0125.cpp`), and past that, flat patches from `lcs/host/lcs_lod_lights.cpp`.
+
+Free aim (`lcs/host/lcs_controls.cpp`, generated units 0059, 0063, 0080, 0081, 0097, 0165) follows the ideas of Classic
+Axis for GTA III and Vice City (gennariarmando) and Void Ultimate Aim System for San Andreas (VoidTheMage), no code
+copied: aiming only while the aim button is held, the crosshair only then, the game's own strafe walks, and a camera
+over the shoulder that only the mouse turns.
