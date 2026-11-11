@@ -79,6 +79,12 @@ struct DisplaySurfaceDimensions {
 [[nodiscard]] float rendering_texture_lod_bias() noexcept;
 
 [[nodiscard]] float view_distance_scale() noexcept;
+// View distance, for light coronas. LCS_CORONA_DISTANCE=0 keeps the original distances.
+[[nodiscard]] float corona_distance_scale() noexcept;
+// How far a street lamp's pool of light on the ground shows.
+[[nodiscard]] float lamp_pool_distance() noexcept;
+// Called by the distant lights (lcs_lod_lights.cpp) when they turn themselves off after a failed call.
+void note_lod_lights_off() noexcept;
 
 void lcs_set_view_distance(float value) noexcept;
 void lcs_set_fullscreen_setting(bool enabled) noexcept;
@@ -110,6 +116,14 @@ struct RenderingConfiguration {
     std::string texture_pack{};
     // A second pack under the first: it fills in what the first doesn't replace.
     std::string texture_pack2{};
+    // Distant street lights (lcs_lod_lights.cpp).
+    bool lod_lights{true};
+    float lod_lights_range{500.0f};
+    float lod_lights_radius{1.0f};
+    float lamp_pool_range{120.0f};
+    bool lamp_patches{true};
+    float lamp_patch_range{450.0f};
+    std::uint32_t lod_lights_limit{900u};
     std::uint32_t msaa{4u};
     std::uint32_t depth_precision{24u};
     std::uint32_t texture_cache_entries{8192u};
