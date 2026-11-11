@@ -1,5 +1,7 @@
 #include "lcs_frontend_menu.hpp"
 #include "lcs_frontend_options.hpp"
+#include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "display_window.hpp"
 
 #include <string>
@@ -598,8 +600,14 @@ HostInputState display_window_input() {
     }
 
     HostInputState input{};
+    bool g_radio_key_held = false, g_radio_pad_held = false, g_weapon_key_held = false, g_weapon_pad_held = false;
     const auto publish = [&]() -> HostInputState {
         frontend_options_note_input(input.buttons);
+        radio_wheel_input(g_radio_key_held || g_radio_pad_held, lcs_player_in_vehicle() && !lcs_menu_active() && !frontend_menu_active() && !host_settings_open());
+        // On foot: the weapon wheel (not while free-aiming, when the weapon can't change).
+        weapon_wheel_input(g_weapon_key_held || g_weapon_pad_held,
+                           !lcs_player_in_vehicle() && lcs_camera_in_use() && !lcs_free_aim_active() && !lcs_menu_active() &&
+                               !frontend_menu_active() && !host_settings_open());
         lcs_camera_set_axes(input.camera_x, input.camera_y);
         // While free-aiming: no sprint and no weapon switch (on foot, Cross and the d-pad's left and right).
         if (lcs_free_aim_active()) input.buttons &= ~(kPspCross | kPspLeft | kPspRight);
@@ -685,6 +693,8 @@ HostInputState display_window_input() {
         const bool game_menu = lcs_menu_active() || frontend_menu_active();
         const bool gameplay = (lcs_camera_in_use() || !lcs_camera_hook_enabled()) && !frontend_menu_active();
         const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, game_menu, gameplay, is_down);
+        g_radio_key_held = action_held(controls.bindings, BindAction::RadioWheel, is_down);
+        g_weapon_key_held = action_held(controls.bindings, BindAction::WeaponWheel, is_down);
         if (!test_keys.empty()) {
             static std::uint32_t last_buttons = 0xFFFFFFFFu;
             static bool last_menu = false;
@@ -712,7 +722,17 @@ HostInputState display_window_input() {
         };
         input.camera_x = camera_response(mouse_dx);
         input.camera_y = camera_response(-mouse_dy);
-        if (capture) lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
+        if (radio_wheel_open()) {  // the mouse points at stations
+            radio_wheel_pointer_mouse(mouse_dx, mouse_dy);
+            input.camera_x = 0;
+            input.camera_y = 0;
+        } else if (weapon_wheel_open()) {  // or at weapons
+            weapon_wheel_pointer_mouse(mouse_dx, mouse_dy);
+            input.camera_x = 0;
+            input.camera_y = 0;
+        } else if (capture) {
+            lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
+        }
         if (controls.invert_camera_y) input.camera_y = -input.camera_y;
     }
 
@@ -759,6 +779,10 @@ HostInputState display_window_input() {
                 }
                 return false;
             };
+            for (std::size_t button = 0u; button < static_cast<std::size_t>(PadButton::Count); ++button) {
+                if (pad_down(static_cast<PadButton>(button)) && pad_has(controls.bindings, static_cast<PadButton>(button), BindAction::RadioWheel)) g_radio_pad_held = true;
+                if (pad_down(static_cast<PadButton>(button)) && pad_has(controls.bindings, static_cast<PadButton>(button), BindAction::WeaponWheel)) g_weapon_pad_held = true;
+            }
             const PadSample pad_sample = sample_pad(controls.bindings, driving, pad_down);
             input.buttons |= pad_sample.buttons;
             if (pad_sample.accelerate) input.accelerate = true;
@@ -776,7 +800,15 @@ HostInputState display_window_input() {
                 }
             };
             apply_stick(pad.gamepad.lx, pad.gamepad.ly, controls.bindings.left_stick);
-            apply_stick(pad.gamepad.rx, pad.gamepad.ry, controls.bindings.right_stick);
+            if (radio_wheel_open() || weapon_wheel_open()) {
+                const float x = static_cast<float>(pad.gamepad.rx) / 32767.0f, y = -static_cast<float>(pad.gamepad.ry) / 32767.0f;
+                if (std::hypot(x, y) > 0.35f) {
+                    if (radio_wheel_open()) radio_wheel_pointer_stick(x, y);
+                    else weapon_wheel_pointer_stick(x, y);
+                }
+            } else {
+                apply_stick(pad.gamepad.rx, pad.gamepad.ry, controls.bindings.right_stick);
+            }
         }
     }
     return publish();

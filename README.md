@@ -52,7 +52,11 @@ Like an emulator's save states, and apart from the game's own saves: F5 saves th
 
 Every 5 minutes of play the game also saves a state on its own into Auto 1 to 3, replacing the oldest, so a crash costs at most a few minutes; the game pauses for about a frame while it does. F10, Game, Save states sets how often, or turns it off. The pause menu's States page lists every slot with when it was saved: pick one to load it, or to save into one of your own five. The game's own saving is untouched, and still the safer record of your progress.
 
-## GPS
+## Weapon wheel, radio wheel and GPS
+
+**Weapon wheel:** on foot, hold Tab, or press the right stick's button, then point at a weapon with the mouse or the right stick and let go. The mouse wheel, Q and E change weapon one at a time. Each weapon shows its HUD icon in its colour, with its ammo: from your texture pack when it has the icons, or else as the game draws them, kept the first time each weapon is on the HUD (until then, its name). Not while aiming.
+
+**Radio wheel:** in a vehicle, hold Q, or press the right stick's button, then point at a station with the mouse or the right stick and let go. A quick press of Q goes back a station, and E goes forward, as before. The keys follow GTA V on PC, and both wheels can be rebound under Controls. Logos come from your texture pack when it has them. Otherwise each station's name shows until you've tuned to it once, and the game's own logo is kept from then on. The idea comes from VoidRadioWheel for San Andreas; none of its code or art is used.
 
 **GPS:** in a vehicle, a line on the radar follows the roads to your marker or the mission's objective. It doesn't know one-way streets or which bridges the story has opened yet. Turn it off or change its width under Game, in F10 or Options. The idea comes from [GPS Redux](https://github.com/juicermv/GTA-GPS-Redux) for San Andreas; none of its code is used.
 
@@ -153,10 +157,11 @@ takes the same action names.
 | `WeaponPrevious` | Q, Left, wheel up | Previous weapon. In a vehicle, previous radio station. |
 | `WeaponNext` | E, Right, wheel down | Next weapon. In a vehicle, next radio station. |
 | `Up` | Up | Toggle a special mission. In a vehicle, also pitches up. |
-| `Down` | Down | D-pad down. In a vehicle, horn and pitch down. |
+| `Down` | Down | D-pad down. In a vehicle, pitch down (a wheelie on a bike). |
 | `Pause` | Escape | Pause. |
 | `Camera` | V | Change camera. |
 | `Handbrake` | Space | Handbrake in a vehicle. |
+| `Horn` | G | Horn in a vehicle. |
 
 Controller names follow the Xbox layout. On a PlayStation pad, A is
 Cross, B is Circle, X is Square, and Y is Triangle. `LeftStick` and

@@ -9,6 +9,8 @@
 #include "lcs_frontend_music.hpp"
 #include "lcs_frontend_options.hpp"
 #include "lcs_pause_menu.hpp"
+#include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_texture_pack.hpp"
 #include "lcs_trainer.hpp"
@@ -540,6 +542,15 @@ void register_settings() {
     }
 
     s = {};
+    s.id = "display.RadioWheelSlowMotion"; s.tab = "Game"; s.group = "Radio"; s.title = "Slow motion in the radio and weapon wheels";
+    s.about = "Slows the game while a wheel is open: hold Q in a vehicle for the radio, Tab on foot for weapons, or the right stick's button.";
+    s.kind = Kind::Switch; s.fallback = 1;
+    s.get_value = [] { return config().display.radio_wheel_slow_motion ? 1 : 0; };
+    s.store = [](int v) { host_settings_write("display", "RadioWheelSlowMotion", v != 0 ? "true" : "false"); };
+    s.take = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.radio_wheel_slow_motion = v != 0; }); };
+    opts::declare(s);
+
+    s = {};
     s.id = "display.Gps"; s.tab = "Game"; s.group = "GPS"; s.title = "GPS line on the radar";
     s.about = "In a vehicle, a line along the roads to your marker or the mission's objective.";
     s.kind = Kind::Switch; s.fallback = 1;
@@ -778,7 +789,7 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     static const bool test_enabled = std::getenv("LCS_TEST_MENU") != nullptr;
     const bool open = host_settings_open();
     const std::string overlay = trainer_overlay_text();
-    const bool frontend = frontend_menu_active() || lcs_menu_active();
+    const bool frontend = frontend_menu_active() || radio_wheel_open() || weapon_wheel_open() || lcs_menu_active();
     if (!open && !g_was_open && !test_enabled && overlay.empty() && !frontend) return;
     g_device = device;
     if (!g_initialized) {
@@ -810,6 +821,8 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     if (open_now && !g_was_open) opts::open_menu({});
     if (!open_now && g_was_open) opts::close_menu();
     frontend_menu_draw();
+    radio_wheel_draw();
+    weapon_wheel_draw();
     g_was_open = open_now;
     if (open_now && !opts::draw_menu()) {
         host_settings_handle(HostSettingsKey::Close);

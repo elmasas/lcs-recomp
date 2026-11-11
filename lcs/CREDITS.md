@@ -22,31 +22,33 @@ Texture packs are in PPSSPP's format, so that packs made for the emulator work h
 the world's list of loaded chunks holds 32, and at a view distance of 2 or more the game can queue more than that between
 sector swaps.
 
-The frame log (`lcs/host/lcs_perf_log.*`), the sampling profiler (`lcs/host/lcs_profiler.*`), the crash reporter
-(`lcs/host/lcs_crash.*`) and the cruise rig in `lcs/host/lcs_stress_test.cpp` follow ideas from VCS Recomp
-(`gothamor/gta-vcs-recomp`): a per-frame timing log, a sampling profiler of the game's threads, a crash report with
-the reason and the call stack, and a scripted route for stutter tests. The startup
-menu (`lcs/host/lcs_frontend_menu.cpp`) follows the idea of rofhima13's main menu for VCS Recomp: a host menu at startup
-that leaves saving to the game. The options list the menu is drawn from
-(`lcs/host/lcs_settings.*`) follows VCS Recomp's idea of one registry of typed settings that the menu is generated from;
-its interface and code are this project's own. No code from VCS Recomp is used.
-
-The ground lights of street lamps reach further through the distance the game passes to `CShadows::StoreStaticShadow`
-(`lcs/generated/generated_unit_0125.cpp`), and past that, flat patches from `lcs/host/lcs_lod_lights.cpp`. The pause menu
-(`lcs/host/lcs_pause_menu.cpp`) steers the game's own menu by its selected tab, a layout ThirteenAG's
-`WidescreenFixesPack` notes describe (`Menu.cpp`).
+Ideas only, no code: the radio wheel (`lcs/host/lcs_radio_wheel.cpp`) follows VoidRadioWheel for San Andreas, and the GPS
+line (`lcs/host/lcs_gps.cpp`) follows GPS Redux for San Andreas (`juicermv/GTA-GPS-Redux`). Both are written new for this
+game: the GPS searches the game's own road nodes and draws through its own radar functions, and the wheel changes station
+with the game's own radio button. Neither project's art is included; station logos come from the player's texture pack
+or from the game itself.
 
 Free aim (`lcs/host/lcs_controls.cpp`, generated units 0059, 0063, 0080, 0081, 0097, 0165) follows the ideas of Classic
 Axis for GTA III and Vice City (gennariarmando) and Void Ultimate Aim System for San Andreas (VoidTheMage), no code
 copied: aiming only while the aim button is held, the crosshair only then, the game's own strafe walks, and a camera
 over the shoulder that only the mouse turns.
 
+The ground lights of street lamps reach further through the distance the game passes to `CShadows::StoreStaticShadow`
+(`lcs/generated/generated_unit_0125.cpp`), and past that, flat patches from `lcs/host/lcs_lod_lights.cpp`. The pause menu
+(`lcs/host/lcs_pause_menu.cpp`) steers the game's own menu by its selected tab, a layout ThirteenAG's
+`WidescreenFixesPack` notes describe (`Menu.cpp`).
+
+The frame log (`lcs/host/lcs_perf_log.*`), the sampling profiler (`lcs/host/lcs_profiler.*`), the crash reporter
+(`lcs/host/lcs_crash.*`) and the cruise rig in `lcs/host/lcs_stress_test.cpp` follow ideas from VCS Recomp
+(`gothamor/gta-vcs-recomp`): a per-frame timing log, a sampling profiler of the game's threads, a crash report with
+the reason and the call stack, and a scripted route for stutter tests. The startup
+menu (`lcs/host/lcs_frontend_menu.cpp`) follows the idea of rofhima13's main menu for VCS Recomp: a host menu at startup
+that leaves saving to the game. The options list both menus are drawn from (`lcs/host/lcs_settings.*`) follows its idea
+of one registry of typed settings that the menu is generated from; its interface and code are this project's own. No
+code from VCS Recomp is used.
+
+The trainer's cheats are the game's own: the routines its cheat-code check calls, and its button codes.
+
 Save states (`lcs/host/lcs_profile_state.inc`, `lcs_state.hpp`, `lcs_state_io.hpp`) follow the idea of an emulator's save
 states, as in PPSSPP, with the F5/F7 keys many emulators use. No code is taken from any emulator: the format and what it
 saves are this project's own.
-
-Ideas only, no code: the GPS line (`lcs/host/lcs_gps.cpp`) follows GPS Redux for San Andreas
-(`juicermv/GTA-GPS-Redux`). It is written new for this game: it searches the game's own road nodes and draws through
-its own radar functions.
-
-The trainer's cheats are the game's own: the routines its cheat-code check calls, and its button codes.
