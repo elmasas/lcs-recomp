@@ -3905,6 +3905,40 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
     return presented || readback_now;
 }
 
+bool ge_gpu_backend_supports_host_frame() noexcept { return state().enabled; }
+
+bool ge_gpu_backend_present_host_frame() noexcept {
+    Dx12GeState &s = state();
+    if (!s.enabled || s.native_window == nullptr) return false;
+    std::string error;
+    if (!ensure_swapchain(s, error)) return false;
+    Dx12FrameResources &frame = s.frames[s.frame_cursor];
+    if (!wait_for_fence(s, frame.fence_value, error)) return false;
+    frame.transient_resources.clear();
+    frame.transient_placements.clear();
+    if (FAILED(frame.allocator->Reset()) || FAILED(s.list->Reset(frame.allocator.Get(), nullptr))) return false;
+    const UINT index = s.swapchain->GetCurrentBackBufferIndex();
+    ID3D12Resource *backbuffer = s.backbuffers[index].Get();
+    transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = swap_rtv(s, index);
+    s.list->OMSetRenderTargets(1u, &rtv, FALSE, nullptr);
+    constexpr float black[4]{0.0f, 0.0f, 0.0f, 1.0f};
+    s.list->ClearRenderTargetView(rtv, black, 0u, nullptr);
+    imgui_menu_record(s.device.Get(), s.queue.Get(), s.list.Get(), s.native_window, kColorFormat, kFrameCount);
+    if (test_shot_due()) record_test_shot(s, backbuffer);
+    transition(s.list.Get(), backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    if (FAILED(s.list->Close())) return false;
+    ID3D12CommandList *lists[]{s.list.Get()};
+    s.queue->ExecuteCommandLists(1u, lists);
+    const bool vsync = lcs_render_configuration().display.vsync;
+    const HRESULT presented = s.swapchain->Present(vsync ? 1u : 0u, !vsync && s.swapchain_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0u);
+    frame.fence_value = s.next_fence++;
+    if (FAILED(s.queue->Signal(s.fence.Get(), frame.fence_value))) return false;
+    if (g_test_shot.pending && wait_for_fence(s, frame.fence_value, error)) write_test_shot();
+    s.frame_cursor = (s.frame_cursor + 1u) % kFrameCount;
+    return SUCCEEDED(presented);
+}
+
 bool ge_gpu_backend_copy_game_frame_rgba(std::span<std::byte> destination) noexcept {
     const Dx12GeState &s = state();
     if (s.frame_rgba.empty() || destination.size() < s.frame_rgba.size()) return false;
@@ -3981,6 +4015,8 @@ void ge_gpu_backend_set_native_window(void *) noexcept {}
 void ge_gpu_backend_set_display_framebuffer(std::uint32_t address, std::uint32_t, std::uint32_t) noexcept { state().display_framebuffer = address & 0x001FFFF0u; }
 void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &height) noexcept { width = 480u; height = 272u; }
 bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept { return false; }
+bool ge_gpu_backend_supports_host_frame() noexcept { return false; }
+bool ge_gpu_backend_present_host_frame() noexcept { return false; }
 bool ge_gpu_backend_copy_game_frame_rgba(std::span<std::byte>) noexcept { return false; }
 bool ge_gpu_backend_presents_directly() noexcept { return false; }
 std::uint32_t ge_gpu_backend_owned_framebuffer() noexcept { return 0u; }

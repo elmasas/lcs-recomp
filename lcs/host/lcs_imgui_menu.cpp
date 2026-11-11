@@ -4,7 +4,11 @@
 
 #include "display_window.hpp"
 #include "lcs_display_menu.hpp"
+#include "lcs_frontend_menu.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_frontend_music.hpp"
+#include "lcs_frontend_options.hpp"
+#include "lcs_pause_menu.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_texture_pack.hpp"
 #include "lcs_settings.hpp"
@@ -242,6 +246,79 @@ void register_settings() {
     opts::declare(s);
 
     s = {};
+    s.id = "display.MainMenu"; s.tab = "Display"; s.group = "Main menu"; s.title = "Show the main menu";
+    s.about = "At launch. Off goes straight into your save, or a new game, after the logos and the title movie.";
+    s.kind = Kind::Switch; s.fallback = 1;
+    s.get_value = [] { return config().display.skip_main_menu ? 0 : 1; };
+    s.store = [](int v) { host_settings_write("display", "SkipMainMenu", v != 0 ? "false" : "true"); };
+    s.take = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.skip_main_menu = v == 0; }); };
+    s.when = When::NextLaunch;
+    opts::declare(s);
+
+    {
+        static const std::array<const char *, 4> tracks = {"intro", "finale", "ending", "off"};
+        Setting m;
+        m.id = "display.MenuMusic"; m.tab = "Display"; m.group = "Main menu"; m.title = "Music";
+        m.about = "From your game's files. Follows the master volume.";
+        m.kind = Kind::List; m.fallback = 0;
+        m.entries = {{"Opening theme", 0}, {"Finale", 1}, {"Ending", 2}, {"Off", 3}};
+        m.get_value = [] {
+            const std::string &wanted = config().display.menu_music;
+            for (std::size_t i = 0u; i < tracks.size(); ++i) {
+                if (wanted == tracks[i]) return static_cast<int>(i);
+            }
+            return 0;
+        };
+        const auto stored = [](int v) { return std::string(tracks[static_cast<std::size_t>(std::clamp(v, 0, 3))]); };
+        m.store = [stored](int v) { host_settings_write("display", "MenuMusic", stored(v)); };
+        m.take = [stored](int v) {
+            lcs_update_configuration([&](LcsConfiguration &c) { c.display.menu_music = stored(v); });
+            frontend_music_select(stored(v));
+        };
+        opts::declare(m);
+    }
+    {
+        Setting a;
+        a.id = "display.MenuArt"; a.tab = "Display"; a.group = "Main menu"; a.title = "Painting";
+        a.about = "Your own images, from the game folder's MENUART, then the game's. Random uses yours if you have any, among those that suit the window's shape.";
+        a.kind = Kind::List; a.fallback = 0;
+        a.entries_now = [] {
+            std::vector<Entry> list{{"Random each start", 0}};
+            int index = 0;
+            for (const FrontendArtChoice &choice : frontend_art_choices()) list.push_back({choice.label, ++index});
+            return list;
+        };
+        a.get_value = [] {
+            const std::string &wanted = config().display.menu_art;
+            const auto &choices = frontend_art_choices();
+            for (std::size_t i = 0u; i < choices.size(); ++i) {
+                if (wanted == choices[i].value) return static_cast<int>(i) + 1;
+            }
+            return 0;
+        };
+        const auto stored = [](int v) {
+            const auto &choices = frontend_art_choices();
+            return v > 0 && v <= static_cast<int>(choices.size()) ? choices[static_cast<std::size_t>(v - 1)].value : std::string("random");
+        };
+        a.store = [stored](int v) { host_settings_write("display", "MenuArt", stored(v)); };
+        a.take = [stored](int v) { lcs_update_configuration([&](LcsConfiguration &c) { c.display.menu_art = stored(v); }); };
+        a.when = When::NextLaunch;
+        opts::declare(a);
+
+        Setting q;
+        q.id = "display.MenuArtQuality"; q.tab = "Display"; q.group = "Main menu"; q.title = "Painting quality";
+        q.about = "For the game's own paintings. Automatic uses your texture pack's version when it has one, and otherwise the game's own, smoothly enlarged. Smooth always uses the game's own.";
+        q.kind = Kind::List; q.fallback = 0;
+        q.entries = {{"Automatic", 0}, {"Smooth", 2}};
+        q.get_value = [] { return config().display.menu_art_quality == "smooth" ? 2 : 0; };
+        const auto quality = [](int v) { return std::string(v == 2 ? "smooth" : "auto"); };
+        q.store = [quality](int v) { host_settings_write("display", "MenuArtQuality", quality(v)); };
+        q.take = [quality](int v) { lcs_update_configuration([&](LcsConfiguration &c) { c.display.menu_art_quality = quality(v); }); };
+        q.when = When::NextLaunch;
+        opts::declare(q);
+    }
+
+    s = {};
     s.id = "display.HudAtEdges"; s.tab = "Display"; s.group = "Picture"; s.title = "HUD at screen edges";
     s.about = "On a wide screen the HUD normally stays in the middle 16:9. This moves it out to the sides.";
     s.kind = Kind::Switch; s.fallback = 0;
@@ -461,8 +538,31 @@ void register_settings() {
     opts::declare(s);
 
     s = {};
+    s.id = "display.ClassicPause"; s.tab = "Game"; s.group = "Pause menu"; s.title = "Use the classic pause menu";
+    s.about = "The game's own pause menu, instead of this one.";
+    s.kind = Kind::Switch; s.fallback = 0;
+    s.get_value = [] { return config().display.classic_pause ? 1 : 0; };
+    s.store = [](int v) { host_settings_write("display", "ClassicPause", v != 0 ? "true" : "false"); };
+    s.take = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.classic_pause = v != 0; }); };
+    opts::declare(s);
+    {
+        const auto game_page = [](const char *key, const char *label, const char *help, int tab) {
+            Setting a;
+            a.id = key; a.tab = "Game"; a.group = "The game's own pages"; a.title = label; a.about = help;
+            a.kind = Kind::Button; a.button_text = "Open";
+            a.held = [] { return !lcs_menu_active(); };
+            a.held_note = "Only from the pause menu.";
+            a.take = [tab](int) { pause_menu_open_game_tab(tab); frontend_options_close(); };
+            opts::declare(a);
+        };
+        game_page("gamepage.Display", "Game display settings", "Brightness, subtitles, radar and HUD modes.", 7);
+        game_page("gamepage.Controls", "Game controls", "The game's control layouts, for a controller.", 5);
+        game_page("gamepage.Language", "Language", "The game's language.", 9);
+    }
+
+    s = {};
     s.id = "display.AutoStateMinutes"; s.tab = "Game"; s.group = "Save states"; s.title = "Automatic state";
-    s.about = "Saves a state every few minutes into Auto 1-3, replacing the oldest.";
+    s.about = "Saves a state every few minutes into Auto 1-3, replacing the oldest. The pause menu's States page loads them.";
     s.kind = Kind::List; s.fallback = 0;
     s.entries = {{"Off", 0}, {"Every 2 minutes", 2}, {"Every 5 minutes", 5}, {"Every 10 minutes", 10}, {"Every 15 minutes", 15}};
     s.get_value = [] { return static_cast<int>(config().display.auto_state_minutes); };
@@ -575,7 +675,7 @@ ImTextureID imgui_menu_upload_rgba(std::uint32_t width, std::uint32_t height, co
 }
 
 bool imgui_menu_note_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) noexcept {
-    if (!host_settings_open() || !is_input_message(message)) return false;
+    if ((!host_settings_open() && !frontend_menu_active() && !pause_menu_visible()) || !is_input_message(message)) return false;
     try {
         std::lock_guard lock(g_queue_mutex);
         // A menu that is not drawing cannot drain this.
@@ -590,7 +690,8 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     if (g_failed) return;
     static const bool test_enabled = std::getenv("LCS_TEST_MENU") != nullptr;
     const bool open = host_settings_open();
-    if (!open && !g_was_open && !test_enabled) return;
+    const bool frontend = frontend_menu_active() || lcs_menu_active();
+    if (!open && !g_was_open && !test_enabled && !frontend) return;
     g_device = device;
     if (!g_initialized) {
         if (!initialize(device, queue, window, format, frames_in_flight)) {
@@ -613,13 +714,14 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     test_menu_step();
     const bool open_now = host_settings_open();
     opts::keys_captured = g_capturing_action >= 0;
-    if (open_now) {
+    if (open_now || frontend_options_is_open()) {
         poll_key_capture();
     } else {
         g_capturing_action = -1;
     }
     if (open_now && !g_was_open) opts::open_menu({});
     if (!open_now && g_was_open) opts::close_menu();
+    frontend_menu_draw();
     g_was_open = open_now;
     if (open_now && !opts::draw_menu()) {
         host_settings_handle(HostSettingsKey::Close);

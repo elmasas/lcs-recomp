@@ -32,11 +32,37 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## Main menu
+
+On Windows the game opens on a main menu: Continue, Load Game, Load State (see Save states), New Game, Options and Quit Game. Continue loads your newest save. Everything it shows and plays comes from your own game files at runtime, and nothing from the game is included here. To go straight to the game instead, turn off F10, Display, Show the main menu.
+
+**Music** is the game's opening theme. F10, Display, Music also has the finale, the ending, or off. It follows the master volume.
+
+**Paintings** are chosen at random from the game's loading screens, or from your texture pack if it has them. You can also add your own PNG pictures to `game/MENUART/`; random prefers them. F10, Display, Painting picks a fixed one.
+
+To use your own images, put PNG files in `lcs/game/MENUART/`, or `game/MENUART/` in a release. Random then uses only those, among the ones that suit your window's shape, and the file name is how an image appears in the list. The [high-resolution LCS artworks](https://gtaforums.com/topic/992240-lcs-high-resolution-gta-lcs-artworks/) on GTAForums look very good here.
+
+## Saves
+
+The game has 8 save slots. Walk onto the save disc at a safehouse to choose one. The game's own Load and Delete, in the pause menu's Game page, use the same list. Saves are in `lcs/game/PSP/SAVEDATA/`, in the game's own format, with a `SLOTINFO.TXT` beside each one for the list to show. On Linux the list isn't drawn yet, and the game uses a single slot.
+
 ## Save states
 
-Like an emulator's save states, and apart from the game's own saves: F5 saves the whole game at once, F6 picks the next of 5 slots, F7 loads the chosen slot. A short message shows in the corner. States are files in `lcs/game/STATES/`, or `game/STATES/` in a release, and each is about 30 MB because it holds the game's memory, so share none and publish none. A state works across restarts, but not across a new version of the game that changes what a state holds (it says so instead of loading). F5 and F7 don't work during a movie or while a menu is open.
+Like an emulator's save states, and apart from the game's own saves: F5 saves the whole game at once, F6 picks the next of 5 slots, F7 loads the chosen slot. A short message shows in the corner. States are files in `lcs/game/STATES/`, or `game/STATES/` in a release, and each is about 30 MB because it holds the game's memory, so share none and publish none. The main menu has a Load State item, shown when a state exists, that loads the newest one: if the game crashes, start it and choose that. A state works across restarts, but not across a new version of the game that changes what a state holds (it says so instead of loading). F5 and F7 don't work during a movie, in the main menu or while a menu is open.
 
-The game can also save a state on its own every few minutes of play, into Auto 1 to 3, replacing the oldest, so a crash costs at most a few minutes; the game pauses for about a frame while it does. It's off unless you turn it on: F10, Game, Save states, Automatic state (or `AutoStateMinutes=` under `[Display]`, from 1 to 60). The game's own saving is untouched, and still the safer record of your progress.
+The game can also save a state on its own every few minutes of play, into Auto 1 to 3, replacing the oldest, so a crash costs at most a few minutes; the game pauses for about a frame while it does. It's off unless you turn it on: F10, Game, Save states, Automatic state (or `AutoStateMinutes=` under `[Display]`, from 1 to 60). The pause menu's States page lists every slot with when it was saved: pick one to load it, or to save into one of your own five. The game's own saving is untouched, and still the safer record of your progress.
+
+## In-game menu
+
+## Pause menu
+
+Esc opens one row of pages: Map, Brief, Stats, Game, Audio, Settings and Quit. A/D or Q/E move along the row, Enter goes into a page, and Esc comes back out, then closes the menu. Map, Brief, Stats, Game and Audio are the game's own pages, so the map, loading and stats work as they always have. Settings is the same screen as Options on the main menu, and its Game page also opens the game's own display, controls and language pages. To get the game's original pause menu back, turn on Settings, Game, Use the classic pause menu.
+
+F10 opens the settings on Windows. Settings are saved to `LCSNative.ini`.
+
+| Page | What's there |
+| --- | --- |
+| Display, Graphics, Controls, Game | Window, resolution, view distance, frame rate, distant street lights, texture pack |
 
 ## Texture packs
 

@@ -1,5 +1,9 @@
 // LCS (GTA: Liberty City Stories) kernel HLE.
 
+#include "lcs_frontend_menu.hpp"
+#include "lcs_frontend_options.hpp"
+#include "lcs_pause_menu.hpp"
+#include "lcs_save_slots.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_state.hpp"
 #include "lcs_state_io.hpp"
@@ -892,6 +896,7 @@ std::uint32_t save_savedata_file(psprecomp::Runtime &runtime, std::uint32_t para
             !write_savedata_auxiliary(runtime, parameter_address, kSavedataSnd0Offset, "SND0.AT3")) {
             return 0x80110385u;
         }
+        save_slots_note_saved(runtime, parameter_address, path.parent_path());
     }
     return 0u;
 }
@@ -1021,9 +1026,13 @@ std::uint32_t execute_savedata_operation(psprecomp::Runtime &runtime, std::uint3
     case 3u: // SAVE
     case 5u: // LISTSAVE
         return save_savedata_file(runtime, parameter_address, data_path, false);
+    case 7u: // LISTALLDELETE, once the player has picked the save
     case 9u: // AUTODELETE
     case 10u: // DELETE
-        if (!std::filesystem::exists(directory)) return 0x80110347u;
+        // Without both names this would be the folder of every save. Only ever delete one save.
+        if (read_fixed_string(runtime.memory(), parameter_address + kSavedataGameNameOffset, 13u).empty() ||
+            read_fixed_string(runtime.memory(), parameter_address + kSavedataSaveNameOffset, 20u).empty()) return 0x80110347u;
+        if (!std::filesystem::is_regular_file(directory / "DATA.BIN")) return 0x80110347u;
         return std::filesystem::remove_all(directory) != 0u ? 0u : 0x80110345u;
     case 11u: // LIST
         return list_savedata_directories(runtime, parameter_address);
@@ -1689,7 +1698,7 @@ void note_player_for_metrics(psprecomp::Runtime &rt) {
         position[i] = std::bit_cast<float>(memory.load32(entity + 48u + i * 4u));
         if (!std::isfinite(position[i]) || std::abs(position[i]) > 100000.0f) return;
     }
-    perf::set_player(position[0], position[1], position[2], driving, lcs_menu_active());
+    perf::set_player(position[0], position[1], position[2], driving, lcs_menu_active() || frontend_menu_active());
 }
 
 std::uint32_t throttle_vblank_to_real_time() {
@@ -1982,8 +1991,14 @@ namespace {
 constexpr int kStateSlots = kStateManualSlots;  // what F6 cycles through
 std::atomic<int> g_state_slot{0};
 
+// F5 and F7. Not in the main menu: a state loaded there would leave the menu on screen and no longer answering, and
+// its Load State item is the way to load one from there.
 bool state_hotkey_allowed() noexcept {
-    if (host_settings_open()) {
+    if (frontend_menu_active()) {
+        host_toast("NOT IN THE MENU");
+        return false;
+    }
+    if (host_settings_open() || pause_menu_visible()) {
         host_toast("CLOSE THE MENU");
         return false;
     }
@@ -3254,7 +3269,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             const auto native = rt.translate_path(path);
             const bool directory = std::filesystem::is_directory(native, error);
             const bool regular = std::filesystem::is_regular_file(native, error);
-            if (!directory && !regular) {
+            if ((!directory && !regular) || (frontend_hide_saves() && path.find("SAVEDATA") != std::string::npos)) {
                 ctx.set_gpr(2, 0x80010002u);
                 return;
             }
@@ -3292,8 +3307,9 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     runtime.register_hle("IoFileMgrForUser", 0xB29DDF9Cu,
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             try {
-                const auto native = rt.translate_path(rt.memory().read_c_string(ctx.gpr[4]));
-                if (!std::filesystem::is_directory(native)) {
+                const std::string guest_path = rt.memory().read_c_string(ctx.gpr[4]);
+                const auto native = rt.translate_path(guest_path);
+                if (!std::filesystem::is_directory(native) || (frontend_hide_saves() && guest_path.find("SAVEDATA") != std::string::npos)) {
                     ctx.set_gpr(2, 0x80010002u);
                     return;
                 }
@@ -3379,14 +3395,26 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
             const HostInputState host = stress_test_enabled()
                 ? stress_test_input(rt, {}) : display_window_input();
-            const std::uint32_t buttons = host.buttons;
+            std::uint8_t analog_x = host.analog_x;
+            std::uint8_t analog_y = host.analog_y;
+            std::uint32_t buttons = frontend_boot_pad(host.buttons);
+            buttons = pause_menu_game_tick(rt, buttons);
             if (perf::g_enabled) note_player_for_metrics(rt);
+            // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.
+            static bool slots_held = false;
+            if (save_slots_open()) slots_held = true;
+            else if (buttons == 0u) slots_held = false;
+            if (slots_held || frontend_options_blocks_game()) {
+                buttons = 0u;
+                analog_x = 128u;
+                analog_y = 128u;
+            }
             for (std::uint32_t index = 0u; index < count; ++index) {
                 const std::uint32_t sample = destination + index * sample_size;
                 rt.memory().store32(sample, static_cast<std::uint32_t>(system_time_microseconds()));
                 rt.memory().store32(sample + 4u, buttons);
-                rt.memory().store8(sample + 8u, host.analog_x);
-                rt.memory().store8(sample + 9u, host.analog_y);
+                rt.memory().store8(sample + 8u, analog_x);
+                rt.memory().store8(sample + 9u, analog_y);
                 rt.memory().store8(sample + 10u, 128u);
                 rt.memory().store8(sample + 11u, 128u);
                 rt.memory().zero(sample + 12u, 4u);
@@ -3642,11 +3670,19 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
             if (savedata_utility.status == UtilityStatus::Init) {
                 savedata_utility.status = UtilityStatus::Visible;
+            } else if (savedata_utility.status == UtilityStatus::Visible && !savedata_utility.operation_complete &&
+                       frontend_menu_tick(rt, savedata_utility.parameter_address)) {
+                // The game waits here, still running, as it would for a slow memory stick.
             } else if (savedata_utility.status == UtilityStatus::Visible && !savedata_utility.operation_complete) {
-                const std::uint32_t result = execute_savedata_operation(rt, savedata_utility.parameter_address);
-                rt.memory().store32(savedata_utility.parameter_address + kUtilityCommonResultOffset, result);
-                savedata_utility.operation_complete = true;
-                savedata_utility.status = UtilityStatus::Quit;
+                ge_worker_wait_idle();  // the list draws its own frames
+                const SlotOutcome slots = save_slots_utility(rt, savedata_utility.parameter_address);
+                if (slots != SlotOutcome::Waiting) {
+                    // The game reads 1 as the player cancelling, which isn't an error to it.
+                    const std::uint32_t result = slots == SlotOutcome::Cancelled ? 1u : execute_savedata_operation(rt, savedata_utility.parameter_address);
+                    rt.memory().store32(savedata_utility.parameter_address + kUtilityCommonResultOffset, result);
+                    savedata_utility.operation_complete = true;
+                    savedata_utility.status = UtilityStatus::Quit;
+                }
             }
             set_success(ctx);
         });

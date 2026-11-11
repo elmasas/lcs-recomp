@@ -1,3 +1,4 @@
+#include "lcs_frontend_menu.hpp"
 #include "lcs_texture_pack.hpp"
 #include "lcs_texture_probe.hpp"
 #include "ge_renderer.hpp"
@@ -4364,6 +4365,7 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
             }
         }
         if (all) {
+            lcs::frontend_note_texture(memory, commands, gpu_draw, std::span<const std::byte>(decoded).first(mip0_bytes));
             // A pack replaces the texture, unless the chosen button prompts repaint it.
             const auto pack_image = lcs::texture_pack_find(memory, commands, gpu_draw);
             std::vector<std::byte> before_prompts;

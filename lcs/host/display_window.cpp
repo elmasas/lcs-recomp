@@ -1,3 +1,5 @@
+#include "lcs_frontend_menu.hpp"
+#include "lcs_frontend_options.hpp"
 #include "display_window.hpp"
 
 #include <string>
@@ -9,9 +11,9 @@
 #include "lcs_display_menu.hpp"
 #include "lcs_perf_log.hpp"
 #include "lcs_imgui_menu.hpp"
-#include "lcs_state.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_key_bindings.hpp"
+#include "lcs_state.hpp"
 #include "lcs_render_config.hpp"
 
 #if defined(_WIN32)
@@ -331,7 +333,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         }
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
-    if (message == WM_SETCURSOR && LOWORD(lparam) == HTCLIENT && host_settings_open()) {
+    if (message == WM_SETCURSOR && LOWORD(lparam) == HTCLIENT && (host_settings_open() || frontend_menu_active())) {
         SetCursor(LoadCursorA(nullptr, IDC_ARROW));
         return TRUE;
     }
@@ -440,6 +442,10 @@ void display_window_attach_gpu_backend() {
 }
 
 bool display_window_closed() { return g_closed; }
+
+void display_window_request_close() {
+    if (g_window != nullptr) PostMessageW(g_window, WM_CLOSE, 0u, 0);
+}
 
 std::atomic<int> g_fullscreen_request{-1};
 
@@ -593,6 +599,7 @@ HostInputState display_window_input() {
 
     HostInputState input{};
     const auto publish = [&]() -> HostInputState {
+        frontend_options_note_input(input.buttons);
         lcs_camera_set_axes(input.camera_x, input.camera_y);
         // While free-aiming: no sprint and no weapon switch (on foot, Cross and the d-pad's left and right).
         if (lcs_free_aim_active()) input.buttons &= ~(kPspCross | kPspLeft | kPspRight);
@@ -605,7 +612,7 @@ HostInputState display_window_input() {
     const std::int32_t mouse_dy = g_mouse_dy.exchange(0, std::memory_order_relaxed);
     const bool focused = g_window != nullptr && GetForegroundWindow() == g_window;
     static bool was_captured = false;
-    const bool in_game = lcs_camera_in_use() && !lcs_menu_active();
+    const bool in_game = lcs_camera_in_use() && !lcs_menu_active() && !frontend_menu_active();
     const bool moving_window = focused && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 &&
                                GetCapture() != nullptr;
     const bool capture = focused && in_game && !moving_window && !IsIconic(g_window);
@@ -675,8 +682,8 @@ HostInputState display_window_input() {
             mark_was = mark;
         }
         static MenuKeyFilter menu_keys;
-        const bool game_menu = lcs_menu_active();
-        const bool gameplay = (lcs_camera_in_use() || !lcs_camera_hook_enabled());
+        const bool game_menu = lcs_menu_active() || frontend_menu_active();
+        const bool gameplay = (lcs_camera_in_use() || !lcs_camera_hook_enabled()) && !frontend_menu_active();
         const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, game_menu, gameplay, is_down);
         if (!test_keys.empty()) {
             static std::uint32_t last_buttons = 0xFFFFFFFFu;

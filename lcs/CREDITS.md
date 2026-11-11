@@ -25,12 +25,16 @@ sector swaps.
 The frame log (`lcs/host/lcs_perf_log.*`), the sampling profiler (`lcs/host/lcs_profiler.*`), the crash reporter
 (`lcs/host/lcs_crash.*`) and the cruise rig in `lcs/host/lcs_stress_test.cpp` follow ideas from VCS Recomp
 (`gothamor/gta-vcs-recomp`): a per-frame timing log, a sampling profiler of the game's threads, a crash report with
-the reason and the call stack, and a scripted route for stutter tests. The options list the menu is drawn from
+the reason and the call stack, and a scripted route for stutter tests. The startup
+menu (`lcs/host/lcs_frontend_menu.cpp`) follows the idea of rofhima13's main menu for VCS Recomp: a host menu at startup
+that leaves saving to the game. The options list the menu is drawn from
 (`lcs/host/lcs_settings.*`) follows VCS Recomp's idea of one registry of typed settings that the menu is generated from;
 its interface and code are this project's own. No code from VCS Recomp is used.
 
 The ground lights of street lamps reach further through the distance the game passes to `CShadows::StoreStaticShadow`
-(`lcs/generated/generated_unit_0125.cpp`), and past that, flat patches from `lcs/host/lcs_lod_lights.cpp`.
+(`lcs/generated/generated_unit_0125.cpp`), and past that, flat patches from `lcs/host/lcs_lod_lights.cpp`. The pause menu
+(`lcs/host/lcs_pause_menu.cpp`) steers the game's own menu by its selected tab, a layout ThirteenAG's
+`WidescreenFixesPack` notes describe (`Menu.cpp`).
 
 Free aim (`lcs/host/lcs_controls.cpp`, generated units 0059, 0063, 0080, 0081, 0097, 0165) follows the ideas of Classic
 Axis for GTA III and Vice City (gennariarmando) and Void Ultimate Aim System for San Andreas (VoidTheMage), no code

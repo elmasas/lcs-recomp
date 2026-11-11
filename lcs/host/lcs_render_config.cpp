@@ -194,9 +194,34 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Display.HudScale must be between 0.25 and 1.0");
         return;
     }
+    if (key == "skipmainmenu") {
+        if (!parse_bool(value, config.display.skip_main_menu))
+            warning(config, line, "Display.SkipMainMenu must be true or false");
+        return;
+    }
+    if (key == "menuart") {
+        config.display.menu_art = std::string(value);
+        return;
+    }
+    if (key == "menuartquality") {
+        config.display.menu_art_quality = std::string(value);
+        // Older settings files may say "sharp" or "xbrz", an upscaler since removed: read them as automatic.
+        const std::string quality = lowercase_copy(config.display.menu_art_quality);
+        if (quality == "sharp" || quality == "xbrz") config.display.menu_art_quality = "auto";
+        return;
+    }
+    if (key == "classicpause") {
+        if (!parse_bool(value, config.display.classic_pause))
+            warning(config, line, "Display.ClassicPause must be true or false");
+        return;
+    }
     if (key == "autostateminutes") {
         if (!parse_u32(value, 0u, 60u, config.display.auto_state_minutes))
             warning(config, line, "Display.AutoStateMinutes must be 0 (off) to 60");
+        return;
+    }
+    if (key == "menumusic") {
+        config.display.menu_music = std::string(value);
         return;
     }
     if (key == "hudatedges") {
