@@ -25,6 +25,20 @@ bool host_settings_handle(HostSettingsKey key) noexcept;
 void host_settings_note_fullscreen(bool enabled) noexcept;
 [[nodiscard]] HostSettingsView host_settings_view() noexcept;
 
+// The F10 rows, shared with the pause menu's GRAPHICS screen.
+enum class HostSettingsRow { ViewDistance, Fullscreen, Resolution, ShowFps, FrameRate };
+void host_settings_change(HostSettingsRow row, int direction) noexcept;
+void host_settings_value(HostSettingsRow row, char *text, std::size_t size) noexcept;
+// The internal resolution was changed since start; it applies on restart.
+[[nodiscard]] bool host_settings_resolution_pending() noexcept;
+
+// Writes the display, rendering and timing settings the menus change back to
+// the ini file.
+void host_settings_save() noexcept;
+// [Controls]: the mouse options, and the keys of each action whose flag is set
+// (indexed by BindAction). Other lines keep their text.
+void host_settings_save_controls(const bool *changed_actions, std::size_t count) noexcept;
+
 // Win32 message and virtual-key values, named here so the window procedure
 // and the tests share one classification without including windows.h.
 inline constexpr std::uint32_t kWin32KeyDown = 0x0100u;

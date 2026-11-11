@@ -27,6 +27,8 @@ struct HostInputState {
     int camera_y{};
     bool accelerate{};
     bool brake{};
+    bool look_left{};
+    bool look_right{};
     std::uint8_t throttle{};
     std::uint8_t brake_pressure{};
 };

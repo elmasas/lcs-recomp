@@ -348,15 +348,15 @@ def write_controls(ini_path: Path, values: dict[str, str]) -> None:
     ini_path.write_text("".join(lines), encoding="utf-8", newline="")
 
 
-PROMPT_STYLES = ("original", "xbox", "kb")
+PROMPT_STYLES = ("auto", "original", "xbox", "kb")
 
 
 def read_prompt_style(ini_path: Path) -> str:
-    """Display.ButtonPrompts: original PlayStation glyphs, xbox, or kb."""
+    """Display.ButtonPrompts: auto, original PlayStation glyphs, xbox, or kb."""
     if not ini_path.exists():
-        return "original"
+        return "auto"
     values = read_section(ini_path, "display")
-    raw = values.get("ButtonPrompts") or values.get("PromptStyle") or "original"
+    raw = values.get("ButtonPrompts") or values.get("PromptStyle") or "auto"
     style = raw.strip().lower()
     if style in ("psp", "playstation", "off", "none", ""):
         return "original"
@@ -367,7 +367,8 @@ def read_prompt_style(ini_path: Path) -> str:
 
 def write_prompt_style(ini_path: Path, style: str) -> None:
     value = style if style in PROMPT_STYLES else "original"
-    write_section_keys(ini_path, "Display", {"ButtonPrompts": value.capitalize() if value == "original" else value})
+    write_section_keys(ini_path, "Display",
+                       {"ButtonPrompts": value.capitalize() if value in ("original", "auto") else value})
 
 
 def read_section(ini_path: Path, section: str) -> dict[str, str]:

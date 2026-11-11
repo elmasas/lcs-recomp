@@ -5134,8 +5134,6 @@ L_089BDC34:
     if (rt.invoke_chained_direct<&recomp_unit_0057_entry, 57u, 491u, 0x088EABACu>(ctx, &aot_mem) && ctx.pc == 0x089BDC44u) goto L_089BDC44;
     return;
 L_089BDC44:
-    // Jump direction while firing a gun.
-    if (lcs::lcs_free_aim_active()) ctx.gpr[2] = 1u;
     { const bool branch_taken = ctx.gpr[2] == 0u;
     // nop
       if (branch_taken) {

@@ -1,6 +1,8 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "decomp.hpp"  // [decomp-hook]
 #include "lcs_lang.hpp"
+#include "lcs_menu_pages.hpp"  // [lcs-menu-pages]
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -2976,6 +2978,7 @@ L_08ADCBA8:
     ctx.pc = jump_target;
     return;
 L_08ADCBEC:
+    if (lcs::decomp::run<0x08ADCBECu>(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [decomp-hook]
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-96));
     ctx.gpr[5] = (aot_mem.aot_load32(ctx.gpr[4] + static_cast<std::uint32_t>(1380)));
     ctx.gpr[6] = (0u | 12u);
@@ -3869,8 +3872,8 @@ L_08ADD210:
     }
 L_08ADD224:
     ctx.gpr[4] = (aot_mem.aot_load32(ctx.gpr[16] + static_cast<std::uint32_t>(0)));
-    if (ctx.gpr[4] == lcs::kLangTab) {
-        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), lcs::kLangPage);
+    if (const std::int32_t host_screen = lcs::lcs_menu_tab_screen(ctx.gpr[4]); host_screen >= 0) {  // [lcs-menu-pages] LANGUAGE, GRAPHICS
+        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), static_cast<std::uint32_t>(host_screen));
         goto L_08ADD330;
     }
     ctx.gpr[5] = (ctx.gpr[4] + static_cast<std::uint32_t>(-1));
@@ -3966,8 +3969,8 @@ L_08ADD2A0:
     }
 L_08ADD2AC:
     ctx.gpr[4] = (aot_mem.aot_load32(ctx.gpr[16] + static_cast<std::uint32_t>(0)));
-    if (ctx.gpr[4] == lcs::kLangTab) {
-        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), lcs::kLangPage);
+    if (const std::int32_t host_screen = lcs::lcs_menu_tab_screen(ctx.gpr[4]); host_screen >= 0) {  // [lcs-menu-pages] LANGUAGE, GRAPHICS
+        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), static_cast<std::uint32_t>(host_screen));
         goto L_08ADD330;
     }
     ctx.gpr[5] = (ctx.gpr[4] + static_cast<std::uint32_t>(-1));
@@ -7811,8 +7814,8 @@ L_08ADEFF4:
       goto L_08ADF008;
     }
 L_08ADF008:
-    if (ctx.gpr[4] == lcs::kLangTab) {
-        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), lcs::kLangPage);
+    if (const std::int32_t host_screen = lcs::lcs_menu_tab_screen(ctx.gpr[4]); host_screen >= 0) {  // [lcs-menu-pages] LANGUAGE, GRAPHICS
+        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), static_cast<std::uint32_t>(host_screen));
         goto L_08ADF168;
     }
     ctx.gpr[4] = (ctx.gpr[4] + static_cast<std::uint32_t>(-1));
@@ -7906,8 +7909,8 @@ L_08ADF07C:
       goto L_08ADF088;
     }
 L_08ADF088:
-    if (ctx.gpr[4] == lcs::kLangTab) {
-        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), lcs::kLangPage);
+    if (const std::int32_t host_screen = lcs::lcs_menu_tab_screen(ctx.gpr[4]); host_screen >= 0) {  // [lcs-menu-pages] LANGUAGE, GRAPHICS
+        aot_mem.aot_store32(ctx.gpr[16] + static_cast<std::uint32_t>(1380), static_cast<std::uint32_t>(host_screen));
         goto L_08ADF168;
     }
     ctx.gpr[4] = (ctx.gpr[4] + static_cast<std::uint32_t>(-1));

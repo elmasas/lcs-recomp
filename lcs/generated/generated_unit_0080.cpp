@@ -1,4 +1,5 @@
 #include "lcs_controls.hpp"
+#include "guest.hpp"  // [lcs-aim] guest_call
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
 #include <bit>
@@ -8447,31 +8448,54 @@ L_089474DC:
     if (rt.invoke_chained_direct<&recomp_unit_0057_entry, 57u, 491u, 0x088EABACu>(ctx, &aot_mem) && ctx.pc == 0x089474E4u) goto L_089474E4;
     return;
 L_089474E4:
-    // Face the camera while firing a gun standing still.
+    // Manual aim (keyboard and mouse): hold the aim button with a gun while
+    // standing still, as the PSP game only aims from a standstill. The gun is
+    // raised with the game's own CPed::SetPointGunAt(nullptr) (0x088D534C:
+    // PED_AIM_GUN, the weapon's aim animation) and lowered on release with
+    // CPed::ClearPointGunAt (0x088D5678). While aiming, Lee turns with the
+    // camera on the spot and the window holds his movement
+    // (lcs_manual_aim_pose); the game's own movement and animation code runs
+    // unchanged.
     if (!lcs::lcs_auto_aim()) {
+        const std::uint32_t ped = ctx.gpr[16];
         const std::uint32_t weapon_type = aot_mem.aot_load32(
-            ctx.gpr[16] + 1428u + static_cast<std::uint32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + 1720u))) * 28u);
+            ped + 1428u + static_cast<std::uint32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ped + 1720u))) * 28u);
         const bool gun = lcs::lcs_free_aim_weapon(weapon_type);
-        bool aiming = false;
-        if (gun && ctx.gpr[18] != 0u) {
-            AllegrexContext fire = ctx;
-            fire.gpr[4] = ctx.gpr[18];
-            fire.gpr[31] = 0u;
-            const float speed_x = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[16] + 112u));
-            const float speed_y = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[16] + 116u));
+        const bool held = gun && ctx.gpr[18] != 0u && lcs::lcs_manual_aim_held();
+        static bool raised_by_aim = false;
+        const bool pointing = (aot_mem.aot_load32(ped + 0x194u) & 8u) != 0u;
+        const std::uint32_t state = aot_mem.aot_load32(ped + 0x34Cu);
+        // Something else (damage, a cutscene, a car) already put the gun down.
+        if (raised_by_aim && !pointing) raised_by_aim = false;
+        if (held && !raised_by_aim) {
+            const float speed_x = std::bit_cast<float>(aot_mem.aot_load32(ped + 112u));
+            const float speed_y = std::bit_cast<float>(aot_mem.aot_load32(ped + 116u));
             const bool standing = speed_x * speed_x + speed_y * speed_y < 0.0004f;
-            aiming = standing && rt.invoke_isolated_aot(0x08A98040u, fire) && fire.gpr[2] != 0u;
+            if (standing && !pointing && state == 1u) {
+                // guest_call runs it to its return, through calls into other units.
+                AllegrexContext point = ctx;
+                (void)lcs::decomp::guest_call(point, 0x088D534Cu, {ped, 0u});
+                raised_by_aim = (aot_mem.aot_load32(ped + 0x194u) & 8u) != 0u;
+            }
+        } else if (!held && raised_by_aim) {
+            // A lock-on target (+0x6BC) is the game's own business.
+            if (aot_mem.aot_load32(ped + 0x6BCu) == 0u) {
+                AllegrexContext clear = ctx;
+                (void)lcs::decomp::guest_call(clear, 0x088D5678u, {ped});
+            }
+            raised_by_aim = false;
         }
+        const bool aiming = raised_by_aim;
         lcs::lcs_set_free_aim(aiming);
+        lcs::lcs_set_manual_aim_pose(aiming);
         if (aiming) {
             const std::uint32_t camera = 0x08B832A0u + 400u + aot_mem.aot_load8(0x08B832A0u + 127u) * 656u;
             const float forward_x = std::bit_cast<float>(aot_mem.aot_load32(camera + 416u));
             const float forward_y = std::bit_cast<float>(aot_mem.aot_load32(camera + 420u));
             const std::uint32_t heading = std::bit_cast<std::uint32_t>(std::atan2(-forward_x, forward_y));
-            aot_mem.aot_store32(ctx.gpr[16] + 1248u, heading);
-            aot_mem.aot_store32(ctx.gpr[16] + 1252u, heading);
+            aot_mem.aot_store32(ped + 1248u, heading);
+            aot_mem.aot_store32(ped + 1252u, heading);
         }
-        ctx.gpr[2] = aiming ? 1u : 0u;
     }
     { const bool branch_taken = ctx.gpr[2] == 0u;
     // nop

@@ -5,7 +5,14 @@
 
 #include "lcs_prompt_textures.hpp"
 
+#include "lcs_prompt_glyphs.hpp"
 #include "lcs_render_config.hpp"
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -149,12 +156,53 @@ DumpState &dump_state() {
 
 }
 
+namespace {
+
+// Auto picks Xbox glyphs when a controller is plugged in at start-up and the
+// bound PC keys otherwise. Textures are cached once uploaded, so this is
+// decided once per run.
+bool gamepad_connected_at_start() {
+#if defined(_WIN32)
+    struct Packet {
+        unsigned long packet;
+        unsigned char gamepad[12];
+    };
+    using GetState = unsigned long(__stdcall *)(unsigned long, Packet *);
+    for (const wchar_t *name : {L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll"}) {
+        HMODULE module = LoadLibraryW(name);
+        if (module == nullptr) continue;
+        const auto get_state = reinterpret_cast<GetState>(
+            reinterpret_cast<void *>(GetProcAddress(module, "XInputGetState")));
+        if (get_state == nullptr) continue;
+        for (unsigned long user = 0; user < 4u; ++user) {
+            Packet state{};
+            if (get_state(user, &state) == 0u) return true;  // ERROR_SUCCESS
+        }
+        return false;
+    }
+#endif
+    return false;
+}
+
+const std::string &auto_style() {
+    static const std::string style = gamepad_connected_at_start() ? "xbox" : "kb";
+    return style;
+}
+
+}  // namespace
+
 const std::string &prompt_texture_style() {
-    static std::string style;
+    static thread_local std::string style;
     const std::string configured = lowercase(lcs_render_configuration().display.prompt_style);
+    PromptGlyphStyle built_in{};
     if (configured.empty() || configured == "original" || configured == "psp" ||
         configured == "playstation" || configured == "off" || configured == "none")
         style.clear();
+    else if (configured == "auto")
+        style = auto_style();
+    else if (prompt_glyph_style_from_name(configured, built_in))
+        // Built-in styles share the folder names the launcher writes.
+        style = built_in == PromptGlyphStyle::Xbox ? "xbox" : "kb";
     else
         style = configured;
     return style;
@@ -232,20 +280,28 @@ void prompt_texture_apply(std::uint64_t signature, std::uint32_t width, std::uin
         const auto found = cache.loaded.find(signature);
         if (found != cache.loaded.end()) {
             pixels = found->second;
-        } else {
+        } else if (!cache.missing.contains(signature)) {
             const auto path = find_override_file(style, signature, width, height);
-            if (!path.empty()) {
+            if (!path.empty())
                 pixels = read_rgba_file(path, static_cast<std::size_t>(width) * height * 4u);
-                if (!pixels.empty()) cache.loaded.insert({signature, pixels});
-            }
+            if (!pixels.empty()) cache.loaded.insert({signature, pixels});
+            else cache.missing.insert(signature);
         }
     }
     const std::size_t mip0_bytes = static_cast<std::size_t>(width) * height * 4u;
+    bool changed = false;
     if (!pixels.empty()) {
+        // A pack on disk wins, so hand-made packs keep working.
         const std::size_t copy_bytes = std::min(mip0_bytes, rgba8.size());
         std::memcpy(rgba8.data(), pixels.data(), copy_bytes);
+        if (style == "kb") patch_kb_letter_r(signature, width, height, rgba8);
+        changed = true;
+    } else if (PromptGlyphStyle built_in{}; prompt_glyph_style_from_name(style, built_in)) {
+        // No pack: paint the PC / Xbox glyphs over the disc's own picture.
+        changed = prompt_glyphs_paint(built_in, lcs_render_configuration().controls.bindings,
+                                      signature, width, height, rgba8);
     }
-    if (style == "kb") patch_kb_letter_r(signature, width, height, rgba8);
+    if (!changed) return;
     if (mip_levels > 1u && rgba8.size() >= chain_bytes(width, height, mip_levels))
         rebuild_mip_chain(rgba8, width, height, mip_levels);
 }

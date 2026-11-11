@@ -199,7 +199,7 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
         if (style.size() > 32 || style.find_first_of(forbidden) != std::string::npos ||
             style.find("..") != std::string::npos)
             warning(config, line,
-                    "Display.ButtonPrompts expects Original or a folder name");
+                    "Display.ButtonPrompts expects Auto, Keyboard, Xbox, Original or a folder name");
         else
             config.display.prompt_style = style;
         return;
@@ -552,6 +552,62 @@ void lcs_set_internal_resolution(InternalResolutionMode mode, std::uint32_t scal
     std::lock_guard<std::mutex> guard(global_configuration_mutex());
     global_configuration().rendering.internal_resolution_mode = mode;
     global_configuration().rendering.internal_scale = scale;
+}
+
+void lcs_set_vsync(bool enabled) noexcept {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().display.vsync = enabled;
+}
+
+void lcs_set_anisotropic_filtering(std::uint32_t level) noexcept {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().rendering.anisotropic_filtering = std::clamp(level, 1u, 16u);
+}
+
+void lcs_set_msaa(std::uint32_t samples) noexcept {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().rendering.msaa = std::clamp(samples, 1u, 16u);
+}
+
+void lcs_set_texture_lod_bias(float bias) noexcept {
+    if (!std::isfinite(bias)) return;
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().rendering.texture_lod_bias = std::clamp(bias, -8.0f, 8.0f);
+}
+
+void lcs_set_hud_scale(float scale) noexcept {
+    if (!std::isfinite(scale)) return;
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().display.hud_scale = std::clamp(scale, 0.25f, 1.0f);
+}
+
+void lcs_set_mouse_sensitivity(std::uint32_t sensitivity) noexcept {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().controls.mouse_sensitivity = std::clamp(sensitivity, 1u, 100u);
+}
+
+void lcs_set_invert_camera_y(bool enabled) noexcept {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    global_configuration().controls.invert_camera_y = enabled;
+}
+
+void lcs_set_key_binding(BindAction action, HostKey key) noexcept {
+    if (action >= BindAction::Count) return;
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    ControlBindings &bindings = global_configuration().controls.bindings;
+    const std::size_t index = bind_index(action);
+    bindings.keys[index].fill(HostKey::None);
+    bindings.keys[index][0] = key;
+    bindings.count[index] = key == HostKey::None ? 0u : 1u;
+}
+
+void lcs_reset_key_bindings() noexcept {
+    const ControlBindings defaults = default_control_bindings();
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    ControlBindings &bindings = global_configuration().controls.bindings;
+    // Keyboard and mouse only; the controller layout is left as configured.
+    bindings.keys = defaults.keys;
+    bindings.count = defaults.count;
 }
 
 PresentationRectangle calculate_presentation_rectangle(

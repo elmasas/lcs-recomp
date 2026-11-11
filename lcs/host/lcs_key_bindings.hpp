@@ -53,6 +53,8 @@ enum class HostKey : std::uint8_t {
     WheelUp, WheelDown,
 };
 
+inline constexpr std::size_t kHostKeyCount = static_cast<std::size_t>(HostKey::WheelDown) + 1u;
+
 static_assert(static_cast<int>(HostKey::Z) - static_cast<int>(HostKey::A) == 25);
 static_assert(static_cast<int>(HostKey::Digit9) - static_cast<int>(HostKey::Digit0) == 9);
 static_assert(static_cast<int>(HostKey::F12) - static_cast<int>(HostKey::F1) == 11);
@@ -78,6 +80,10 @@ enum class BindAction : std::uint8_t {
     Pause,
     Camera,
     Handbrake,
+    // In a vehicle: look out of the side window, for drive-by shooting with
+    // Attack. On foot they do nothing, so the same keys can cycle weapons.
+    LookLeft,
+    LookRight,
     Count,
 };
 
@@ -112,6 +118,8 @@ struct KeyboardSample {
     int move_y{};
     bool accelerate{};
     bool brake{};
+    bool look_left{};
+    bool look_right{};
     int reach{127};
 };
 
@@ -159,6 +167,8 @@ inline const char *bind_action_name(BindAction action) noexcept {
     case BindAction::Pause: return "Pause";
     case BindAction::Camera: return "Camera";
     case BindAction::Handbrake: return "Handbrake";
+    case BindAction::LookLeft: return "LookLeft";
+    case BindAction::LookRight: return "LookRight";
     case BindAction::Count: return "";
     }
     return "";
@@ -210,6 +220,8 @@ inline ControlBindings default_control_bindings() {
     add(BindAction::Pause, {HostKey::Escape});
     add(BindAction::Camera, {HostKey::V});
     add(BindAction::Handbrake, {HostKey::Space});
+    add(BindAction::LookLeft, {HostKey::Q});
+    add(BindAction::LookRight, {HostKey::E});
     const auto add_pad = [&](PadButton button, std::initializer_list<BindAction> actions) {
         auto &count = bindings.pad_count[static_cast<std::size_t>(button)];
         for (const BindAction action : actions) {
@@ -246,6 +258,20 @@ bool action_held(const ControlBindings &bindings, BindAction action, IsDown &&is
     return false;
 }
 
+// action_held() without the keys that are also bound to `skip_a` or `skip_b`.
+template <class IsDown>
+bool action_held_except(const ControlBindings &bindings, BindAction action, BindAction skip_a,
+                        BindAction skip_b, IsDown &&is_down) {
+    const std::size_t index = bind_index(action);
+    for (std::uint8_t slot = 0; slot < bindings.count[index]; ++slot) {
+        const HostKey key = bindings.keys[index][slot];
+        if (host_key_is_wheel(key)) continue;
+        if (binding_has(bindings, skip_a, key) || binding_has(bindings, skip_b, key)) continue;
+        if (is_down(key)) return true;
+    }
+    return false;
+}
+
 template <class IsDown>
 KeyboardSample sample_keyboard(const ControlBindings &bindings, bool driving, IsDown &&is_down) {
     KeyboardSample sample;
@@ -261,11 +287,82 @@ KeyboardSample sample_keyboard(const ControlBindings &bindings, bool driving, Is
     sample.accelerate = action_held(bindings, BindAction::MoveForward, is_down);
     sample.brake = action_held(bindings, BindAction::MoveBack, is_down);
     sample.reach = action_held(bindings, BindAction::Walk, is_down) ? 60 : 127;
+    if (driving) {
+        sample.look_left = action_held(bindings, BindAction::LookLeft, is_down);
+        sample.look_right = action_held(bindings, BindAction::LookRight, is_down);
+    }
     for (std::uint8_t index = 0; index < static_cast<std::uint8_t>(BindAction::Count); ++index) {
         const auto action = static_cast<BindAction>(index);
-        if (action_held(bindings, action, is_down))
-            sample.buttons |= action_buttons(action, driving);
+        // In a vehicle the look keys only look: Q and E share their keys with
+        // the radio (weapon previous/next) by default.
+        const bool radio = action == BindAction::WeaponPrevious || action == BindAction::WeaponNext;
+        const bool held = driving && radio
+            ? action_held_except(bindings, action, BindAction::LookLeft, BindAction::LookRight, is_down)
+            : action_held(bindings, action, is_down);
+        if (held) sample.buttons |= action_buttons(action, driving);
     }
+    return sample;
+}
+
+// Outside gameplay (title screen, menus, intro movies, cutscenes) the game
+// confirms and skips with Cross. On keyboard Cross only came from Sprint, so
+// rebinding Sprint left Enter and Space unable to skip or select anything.
+// These keys always drive menus, whatever [Controls] says.
+struct MenuKey {
+    HostKey key;
+    std::uint32_t buttons;
+};
+inline constexpr MenuKey kMenuKeys[] = {
+    {HostKey::Enter, kPspCross},     {HostKey::Space, kPspCross},
+    {HostKey::Backspace, kPspCircle}, {HostKey::Escape, kPspStart},
+    {HostKey::Up, kPspUp},           {HostKey::Down, kPspDown},
+    {HostKey::Left, kPspLeft},       {HostKey::Right, kPspRight},
+};
+
+inline bool is_menu_key(HostKey key) noexcept {
+    for (const MenuKey &entry : kMenuKeys)
+        if (entry.key == key) return true;
+    return false;
+}
+
+// The bindings with the fixed menu keys taken out, so Enter cannot also send
+// Triangle (EnterVehicle) while it confirms a menu. Every other key keeps its
+// binding, so a rebound Attack still backs out and WASD still navigates.
+inline ControlBindings menu_bindings(const ControlBindings &bindings) noexcept {
+    ControlBindings menu = bindings;
+    for (std::size_t action = 0; action < menu.keys.size(); ++action) {
+        std::uint8_t kept = 0u;
+        for (std::uint8_t slot = 0; slot < menu.count[action] && slot < kMaxKeysPerAction; ++slot)
+            if (!is_menu_key(menu.keys[action][slot]))
+                menu.keys[action][kept++] = menu.keys[action][slot];
+        for (std::uint8_t slot = kept; slot < kMaxKeysPerAction; ++slot)
+            menu.keys[action][slot] = HostKey::None;
+        menu.count[action] = kept;
+    }
+    return menu;
+}
+
+// The bindings with every mouse button taken out; in the pause menu the mouse
+// points and clicks instead (display_window*.cpp).
+inline ControlBindings bindings_without_mouse(const ControlBindings &bindings) noexcept {
+    ControlBindings keys = bindings;
+    for (std::size_t action = 0; action < keys.keys.size(); ++action) {
+        std::uint8_t kept = 0u;
+        for (std::uint8_t slot = 0; slot < keys.count[action] && slot < kMaxKeysPerAction; ++slot)
+            if (!host_key_is_mouse(keys.keys[action][slot]) && !host_key_is_wheel(keys.keys[action][slot]))
+                keys.keys[action][kept++] = keys.keys[action][slot];
+        for (std::uint8_t slot = kept; slot < kMaxKeysPerAction; ++slot) keys.keys[action][slot] = HostKey::None;
+        keys.count[action] = kept;
+    }
+    return keys;
+}
+
+// Keyboard sample for menus: the user's bindings plus the fixed menu keys.
+template <class IsDown>
+KeyboardSample sample_menu_keyboard(const ControlBindings &bindings, IsDown &&is_down) {
+    KeyboardSample sample = sample_keyboard(menu_bindings(bindings), false, is_down);
+    for (const MenuKey &entry : kMenuKeys)
+        if (is_down(entry.key)) sample.buttons |= entry.buttons;
     return sample;
 }
 
@@ -332,6 +429,8 @@ inline bool lookup_bind_action(std::string_view name, BindAction &action) noexce
         {"select", BindAction::Camera},
         {"changecamera", BindAction::Camera},
         {"handbrake", BindAction::Handbrake},
+        {"lookleft", BindAction::LookLeft},
+        {"lookright", BindAction::LookRight},
     };
     for (const Alias &alias : kAliases) {
         if (name == alias.name) {
@@ -466,6 +565,127 @@ inline bool lookup_host_key(std::string_view token, HostKey &key, HostKey &extra
         }
     }
     return false;
+}
+
+// The [Controls] name of a key; lookup_host_key() reads it back.
+inline std::string host_key_ini_name(HostKey key) {
+    const int id = static_cast<int>(key);
+    if (host_key_in(key, HostKey::A, HostKey::Z))
+        return std::string(1, static_cast<char>('A' + (id - static_cast<int>(HostKey::A))));
+    if (host_key_in(key, HostKey::Digit0, HostKey::Digit9))
+        return std::string(1, static_cast<char>('0' + (id - static_cast<int>(HostKey::Digit0))));
+    if (host_key_in(key, HostKey::F1, HostKey::F12))
+        return "F" + std::to_string(id - static_cast<int>(HostKey::F1) + 1);
+    if (host_key_in(key, HostKey::Numpad0, HostKey::Numpad9))
+        return "Numpad" + std::to_string(id - static_cast<int>(HostKey::Numpad0));
+    switch (key) {
+    case HostKey::Space: return "Space";
+    case HostKey::Enter: return "Enter";
+    case HostKey::Escape: return "Escape";
+    case HostKey::Tab: return "Tab";
+    case HostKey::Backspace: return "Backspace";
+    case HostKey::LeftShift: return "LeftShift";
+    case HostKey::RightShift: return "RightShift";
+    case HostKey::LeftCtrl: return "LeftCtrl";
+    case HostKey::RightCtrl: return "RightCtrl";
+    case HostKey::LeftAlt: return "LeftAlt";
+    case HostKey::RightAlt: return "RightAlt";
+    case HostKey::Up: return "Up";
+    case HostKey::Down: return "Down";
+    case HostKey::Left: return "Left";
+    case HostKey::Right: return "Right";
+    case HostKey::NumpadPlus: return "NumpadPlus";
+    case HostKey::NumpadMinus: return "NumpadMinus";
+    case HostKey::Delete: return "Delete";
+    case HostKey::Insert: return "Insert";
+    case HostKey::Home: return "Home";
+    case HostKey::End: return "End";
+    case HostKey::PageUp: return "PageUp";
+    case HostKey::PageDown: return "PageDown";
+    case HostKey::Comma: return "Comma";
+    case HostKey::Period: return "Period";
+    case HostKey::Minus: return "Minus";
+    case HostKey::Equals: return "Equals";
+    case HostKey::MouseLeft: return "MouseLeft";
+    case HostKey::MouseRight: return "MouseRight";
+    case HostKey::MouseMiddle: return "MouseMiddle";
+    case HostKey::Mouse4: return "Mouse4";
+    case HostKey::Mouse5: return "Mouse5";
+    case HostKey::WheelUp: return "WheelUp";
+    case HostKey::WheelDown: return "WheelDown";
+    default: return "None";
+    }
+}
+
+// A short upper-case name for the pause menu. The game's font has letters,
+// digits, spaces and a little punctuation, so symbols are spelled out.
+inline std::string host_key_menu_name(HostKey key) {
+    switch (key) {
+    case HostKey::LeftShift: return "LSHIFT";
+    case HostKey::RightShift: return "RSHIFT";
+    case HostKey::LeftCtrl: return "LCTRL";
+    case HostKey::RightCtrl: return "RCTRL";
+    case HostKey::LeftAlt: return "LALT";
+    case HostKey::RightAlt: return "RALT";
+    case HostKey::Escape: return "ESC";
+    case HostKey::NumpadPlus: return "NUM PLUS";
+    case HostKey::NumpadMinus: return "NUM MINUS";
+    case HostKey::PageUp: return "PAGE UP";
+    case HostKey::PageDown: return "PAGE DOWN";
+    case HostKey::MouseLeft: return "LEFT MOUSE";
+    case HostKey::MouseRight: return "RIGHT MOUSE";
+    case HostKey::MouseMiddle: return "MIDDLE MOUSE";
+    case HostKey::Mouse4: return "MOUSE 4";
+    case HostKey::Mouse5: return "MOUSE 5";
+    case HostKey::WheelUp: return "WHEEL UP";
+    case HostKey::WheelDown: return "WHEEL DOWN";
+    default: break;
+    }
+    if (host_key_in(key, HostKey::Numpad0, HostKey::Numpad9))
+        return "NUM " + std::to_string(static_cast<int>(key) - static_cast<int>(HostKey::Numpad0));
+    std::string name = host_key_ini_name(key);
+    for (char &ch : name) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    return name;
+}
+
+// What each action does, for the pause menu's KEYBOARD AND MOUSE screen.
+inline const char *bind_action_menu_name(BindAction action) noexcept {
+    switch (action) {
+    case BindAction::MoveForward: return "FORWARD/ACCELERATE";
+    case BindAction::MoveBack: return "BACK/BRAKE";
+    case BindAction::MoveLeft: return "LEFT";
+    case BindAction::MoveRight: return "RIGHT";
+    case BindAction::Walk: return "WALK";
+    case BindAction::Sprint: return "SPRINT";
+    case BindAction::Jump: return "JUMP";
+    case BindAction::EnterVehicle: return "ENTER/EXIT VEHICLE";
+    case BindAction::Attack: return "ATTACK";
+    case BindAction::Aim: return "AIM";
+    case BindAction::CenterCamera: return "CENTER CAMERA";
+    case BindAction::WeaponPrevious: return "PREVIOUS WEAPON";
+    case BindAction::WeaponNext: return "NEXT WEAPON";
+    case BindAction::Up: return "SPECIAL MISSION";
+    case BindAction::Down: return "HORN";
+    case BindAction::Pause: return "PAUSE";
+    case BindAction::Camera: return "CHANGE CAMERA";
+    case BindAction::Handbrake: return "HANDBRAKE";
+    case BindAction::LookLeft: return "VEHICLE LOOK LEFT";
+    case BindAction::LookRight: return "VEHICLE LOOK RIGHT";
+    case BindAction::Count: return "";
+    }
+    return "";
+}
+
+// The [Controls] value for one action, e.g. "LeftShift,RightShift" or "None".
+inline std::string binding_ini_value(const ControlBindings &bindings, BindAction action) {
+    const std::size_t index = bind_index(action);
+    std::string value;
+    for (std::uint8_t slot = 0; slot < bindings.count[index] && slot < kMaxKeysPerAction; ++slot) {
+        if (bindings.keys[index][slot] == HostKey::None) continue;
+        if (!value.empty()) value += ',';
+        value += host_key_ini_name(bindings.keys[index][slot]);
+    }
+    return value.empty() ? "None" : value;
 }
 
 inline bool binding_token_clears(std::string_view token) noexcept {

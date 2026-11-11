@@ -5,6 +5,7 @@
 #include "ge_gpu_backend.hpp"
 #include "lcs_controls.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_menu_pages.hpp"
 #include "lcs_mouse.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_key_bindings.hpp"
@@ -554,13 +555,53 @@ HostInputState display_window_input() {
         cached = {};
         lcs_camera_set_axes(0, 0);
         lcs_set_host_drive_inputs(false, false);
+        lcs_set_host_vehicle_look(false, false);
+        return cached;
+    }
+    if (lcs_key_capture_active()) {
+        // The pause menu waits for a key to bind; the game gets no input.
+        std::array<bool, kHostKeyCount> down{};
+        const bool focused = g_window != nullptr && g_focused;
+        if (focused) {
+            const std::uint32_t mouse = SDL_GetMouseState(nullptr, nullptr);
+            for (std::size_t index = 1; index < down.size(); ++index) {
+                const HostKey key = static_cast<HostKey>(index);
+                const int code = sdl_scancode(key);
+                if (code >= 0) {
+                    down[index] = key_down(static_cast<SDL_Scancode>(code));
+                    continue;
+                }
+                switch (key) {
+                case HostKey::MouseLeft: down[index] = (mouse & SDL_BUTTON_LMASK) != 0; break;
+                case HostKey::MouseRight: down[index] = (mouse & SDL_BUTTON_RMASK) != 0; break;
+                case HostKey::MouseMiddle: down[index] = (mouse & SDL_BUTTON_MMASK) != 0; break;
+                case HostKey::Mouse4: down[index] = (mouse & SDL_BUTTON_X1MASK) != 0; break;
+                case HostKey::Mouse5: down[index] = (mouse & SDL_BUTTON_X2MASK) != 0; break;
+                default: break;
+                }
+            }
+        }
+        const int wheel = g_wheel.exchange(0, std::memory_order_relaxed);
+        g_mouse_dx.store(0, std::memory_order_relaxed);
+        g_mouse_dy.store(0, std::memory_order_relaxed);
+        lcs_key_capture_update(down.data(), down.size(), focused ? wheel : 0);
+        cached = {};
+        lcs_camera_set_axes(0, 0);
+        lcs_set_host_drive_inputs(false, false);
+        lcs_set_host_vehicle_look(false, false);
         return cached;
     }
 
     HostInputState input{};
     const auto publish = [&]() -> HostInputState {
+        // Aiming stands still (lcs_manual_aim_pose); the mouse still turns.
+        if (lcs_manual_aim_pose()) {
+            input.analog_x = 128u;
+            input.analog_y = 128u;
+        }
         lcs_camera_set_axes(input.camera_x, input.camera_y);
         lcs_set_host_drive_inputs(input.accelerate, input.brake);
+        lcs_set_host_vehicle_look(input.look_left, input.look_right);
         cached = input;
         return cached;
     };
@@ -596,10 +637,30 @@ HostInputState display_window_input() {
             default: return false;
             }
         };
-        const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
+        // Menus, movies and cutscenes get the fixed PC menu keys. In the pause
+        // menu the mouse points and clicks: left is Cross, right is Circle.
+        const bool pause_menu = !in_game && lcs_menu_active();
+        const ControlBindings key_bindings =
+            pause_menu ? bindings_without_mouse(controls.bindings) : controls.bindings;
+        const KeyboardSample keys = in_game
+            ? sample_keyboard(controls.bindings, driving, is_down)
+            : sample_menu_keyboard(key_bindings, is_down);
         input.buttons |= keys.buttons;
+        if (pause_menu) {
+            if (is_down(HostKey::MouseLeft)) input.buttons |= kPspCross;
+            if (is_down(HostKey::MouseRight)) input.buttons |= kPspCircle;
+            int pointer_x = 0;
+            int pointer_y = 0;
+            int client_width = 0;
+            int client_height = 0;
+            SDL_GetMouseState(&pointer_x, &pointer_y);
+            SDL_GetWindowSize(g_window, &client_width, &client_height);
+            lcs_menu_pointer_from_client(true, pointer_x, pointer_y, client_width, client_height);
+        }
         input.accelerate = keys.accelerate;
         input.brake = keys.brake;
+        input.look_left = keys.look_left;
+        input.look_right = keys.look_right;
         input.analog_x = static_cast<std::uint8_t>(
             std::clamp(128 + keys.move_x * keys.reach, 0, 255));
         input.analog_y = static_cast<std::uint8_t>(
@@ -612,6 +673,9 @@ HostInputState display_window_input() {
         };
         input.camera_x = camera_response(mouse_dx);
         input.camera_y = camera_response(-mouse_dy);
+        if (keys.buttons != 0u || keys.move_x != 0 || keys.move_y != 0 || mouse_dx != 0 || mouse_dy != 0 ||
+            wheel != 0)
+            lcs_note_input_device(false);
         if (capture) lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
         if (controls.invert_camera_y) input.camera_y = -input.camera_y;
     }
@@ -619,7 +683,11 @@ HostInputState display_window_input() {
     static int wheel_hold = 0;
     static std::uint32_t wheel_button = 0u;
     if (focused && wheel != 0) {
-        if (lcs_player_aiming()) {
+        if (!in_game && lcs_menu_active()) {
+            // The wheel moves up and down the pause menu.
+            wheel_button = wheel > 0 ? kPspUp : kPspDown;
+            wheel_hold = 4;
+        } else if (lcs_player_aiming()) {
             wheel_button = wheel > 0 ? kPspSquare : kPspCross;
             wheel_hold = 8;
         } else {
@@ -662,6 +730,16 @@ HostInputState display_window_input() {
         return false;
     };
     const PadSample pad = sample_pad(controls.bindings, driving, pad_down);
+    {
+        const auto deflected = [](SDL_GameControllerAxis id) {
+            const int value = SDL_GameControllerGetAxis(g_pad, id);
+            return value > 12000 || value < -12000;
+        };
+        if (pad.buttons != 0u || pad.accelerate || pad.brake || deflected(SDL_CONTROLLER_AXIS_LEFTX) ||
+            deflected(SDL_CONTROLLER_AXIS_LEFTY) || deflected(SDL_CONTROLLER_AXIS_RIGHTX) ||
+            deflected(SDL_CONTROLLER_AXIS_RIGHTY))
+            lcs_note_input_device(true);
+    }
     input.buttons |= pad.buttons;
     if (pad.accelerate) input.accelerate = true;
     if (pad.brake) input.brake = true;

@@ -206,26 +206,56 @@ void save_settings() {
     }
     upsert_ini_line(file, "display", "ShowFPS", config.display.show_fps ? "true" : "false");
     upsert_ini_line(file, "timing", "FrameRate", std::to_string(config.timing.frame_rate));
+    upsert_ini_line(file, "display", "VSync", config.display.vsync ? "true" : "false");
+    char hud[16];
+    std::snprintf(hud, sizeof(hud), "%.2f", config.display.hud_scale);
+    upsert_ini_line(file, "display", "HudScale", hud);
+    upsert_ini_line(file, "rendering", "AnisotropicFiltering",
+                    std::to_string(rendering.anisotropic_filtering));
+    upsert_ini_line(file, "rendering", "MSAA", std::to_string(rendering.msaa));
+    char bias[16];
+    std::snprintf(bias, sizeof(bias), "%.2f", rendering.texture_lod_bias);
+    upsert_ini_line(file, "rendering", "TextureLodBias", bias);
     std::ofstream output(config.source_path, std::ios::trunc);
     if (output) output << file;
 }
 
-void change_selected(int direction) noexcept {
-    if (g_selected == 0) {
+void save_controls(const bool *changed_actions, std::size_t count) {
+    const LcsConfiguration &config = lcs_render_configuration();
+    if (config.source_path.empty()) return;
+    std::ifstream input(config.source_path);
+    if (!input) return;
+    std::string file((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    const ControlsConfiguration &controls = config.controls;
+    upsert_ini_line(file, "controls", "MouseSensitivity", std::to_string(controls.mouse_sensitivity));
+    upsert_ini_line(file, "controls", "InvertCameraY", controls.invert_camera_y ? "true" : "false");
+    const std::size_t actions = std::min(count, static_cast<std::size_t>(BindAction::Count));
+    for (std::size_t index = 0; index < actions; ++index) {
+        if (changed_actions == nullptr || !changed_actions[index]) continue;
+        const BindAction action = static_cast<BindAction>(index);
+        upsert_ini_line(file, "controls", bind_action_name(action),
+                        binding_ini_value(controls.bindings, action));
+    }
+    std::ofstream output(config.source_path, std::ios::trunc);
+    if (output) output << file;
+}
+
+void change_row(int row, int direction) noexcept {
+    if (row == 0) {
         const int count = static_cast<int>(std::size(kDistances));
         lcs_set_view_distance(kDistances[step_index(distance_index(), count, direction)]);
-    } else if (g_selected == 1) {
+    } else if (row == 1) {
         const bool enabled = !lcs_render_configuration().display.fullscreen;
         lcs_set_fullscreen_setting(enabled);
         display_window_request_fullscreen(enabled);
-    } else if (g_selected == 2) {
+    } else if (row == 2) {
         const int count = static_cast<int>(std::size(kResolutions));
         int index = preset_index();
         if (index < 0) index = direction < 0 ? count - 1 : 0;
         else index = step_index(index, count, direction);
         const ResolutionChoice &choice = kResolutions[index];
         lcs_set_internal_resolution(choice.mode, choice.scale);
-    } else if (g_selected == 3) {
+    } else if (row == 3) {
         lcs_set_show_fps(!lcs_render_configuration().display.show_fps);
     } else {
         const int index = lcs_render_configuration().timing.frame_rate == 30u ? 0 : 1;
@@ -243,6 +273,41 @@ void host_settings_note_fullscreen(bool enabled) noexcept {
     save_settings();
 }
 
+void host_settings_save() noexcept { save_settings(); }
+
+void host_settings_save_controls(const bool *changed_actions, std::size_t count) noexcept {
+    save_controls(changed_actions, count);
+}
+
+void host_settings_change(HostSettingsRow row, int direction) noexcept {
+    remember_applied_resolution();
+    change_row(static_cast<int>(row), direction < 0 ? -1 : 1);
+}
+
+void host_settings_value(HostSettingsRow row, char *text, std::size_t size) noexcept {
+    if (text == nullptr || size == 0u) return;
+    const LcsConfiguration &config = lcs_render_configuration();
+    switch (row) {
+    case HostSettingsRow::ViewDistance:
+        format_distance(text, size, kDistances[distance_index()]);
+        break;
+    case HostSettingsRow::Fullscreen:
+        std::snprintf(text, size, "%s", config.display.fullscreen ? "ON" : "OFF");
+        break;
+    case HostSettingsRow::Resolution:
+        format_resolution_label(text, size);
+        break;
+    case HostSettingsRow::ShowFps:
+        std::snprintf(text, size, "%s", config.display.show_fps ? "ON" : "OFF");
+        break;
+    case HostSettingsRow::FrameRate:
+        std::snprintf(text, size, "%u", config.timing.frame_rate);
+        break;
+    }
+}
+
+bool host_settings_resolution_pending() noexcept { return resolution_pending(); }
+
 bool host_settings_handle(HostSettingsKey key) noexcept {
     remember_applied_resolution();
     if (key == HostSettingsKey::Toggle) {
@@ -256,8 +321,8 @@ bool host_settings_handle(HostSettingsKey key) noexcept {
     }
     if (key == HostSettingsKey::Up) g_selected = step_index(g_selected, kRowCount, -1);
     else if (key == HostSettingsKey::Down) g_selected = step_index(g_selected, kRowCount, 1);
-    else if (key == HostSettingsKey::Left) change_selected(-1);
-    else if (key == HostSettingsKey::Right) change_selected(1);
+    else if (key == HostSettingsKey::Left) change_row(g_selected, -1);
+    else if (key == HostSettingsKey::Right) change_row(g_selected, 1);
     return true;
 }
 

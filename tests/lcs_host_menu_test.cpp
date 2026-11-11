@@ -144,6 +144,23 @@ int bindings() {
     if ((sample_keyboard(defaults, true, aim_only).buttons & kPspRTrigger) != 0)
         return fail("aim suppressed in a vehicle");
 
+    // Drive-by: Q / E look in a vehicle instead of changing the radio, and
+    // still cycle weapons on foot. The arrow keys keep the radio.
+    const auto q_lmb = [](HostKey key) { return key == HostKey::Q || key == HostKey::MouseLeft; };
+    const KeyboardSample driveby = sample_keyboard(defaults, true, q_lmb);
+    if (!driveby.look_left || driveby.look_right || (driveby.buttons & kPspLeft) != 0 ||
+        (driveby.buttons & kPspCircle) == 0)
+        return fail("drive-by look left");
+    const auto e_only = [](HostKey key) { return key == HostKey::E; };
+    if (!sample_keyboard(defaults, true, e_only).look_right ||
+        (sample_keyboard(defaults, true, e_only).buttons & kPspRight) != 0)
+        return fail("drive-by look right");
+    const KeyboardSample q_foot = sample_keyboard(defaults, false, q_lmb);
+    if (q_foot.look_left || (q_foot.buttons & kPspLeft) == 0) return fail("q on foot");
+    const auto arrow_left = [](HostKey key) { return key == HostKey::Left; };
+    if ((sample_keyboard(defaults, true, arrow_left).buttons & kPspLeft) == 0)
+        return fail("radio arrow in a vehicle");
+
     ControlBindings edited = defaults;
     std::string warning;
     if (!apply_control_binding(edited, "Jump", "Shift", warning) || !warning.empty() ||
@@ -237,7 +254,23 @@ int bindings() {
         shipped.controls.bindings.right_stick != StickRole::Camera ||
         shipped.controls.bindings.pad_count[static_cast<std::size_t>(PadButton::RightClick)] != 0u)
         return fail("shipped pad");
-    std::cout << "defaults=1 rebound=1 shipped=1 pad=1\n";
+
+    // The pause menu saves rebinds by these names; each must read back as the same key.
+    for (std::size_t index = 1; index < kHostKeyCount; ++index) {
+        const HostKey key = static_cast<HostKey>(index);
+        HostKey parsed = HostKey::None;
+        HostKey extra = HostKey::None;
+        if (!lookup_host_key(normalize_binding_token(host_key_ini_name(key)), parsed, extra) ||
+            parsed != key || extra != HostKey::None)
+            return fail("ini key name round trip");
+        if (host_key_menu_name(key).empty()) return fail("menu key name");
+    }
+    ControlBindings saved = defaults;
+    std::string saved_warning;
+    if (!apply_control_binding(saved, "Jump", binding_ini_value(defaults, BindAction::Jump), saved_warning) ||
+        saved.count != defaults.count || saved.keys != defaults.keys)
+        return fail("binding ini value round trip");
+    std::cout << "defaults=1 rebound=1 shipped=1 pad=1 names=1\n";
     return 0;
 }
 

@@ -262,11 +262,13 @@ std::uint32_t sas_step_envelope(SasVoiceState &voice) noexcept {
             height = 0;
             voice.envelope_phase = SasEnvelopePhase::Off;
             voice.playing = false;
+            voice.on = false;
         }
         break;
     case SasEnvelopePhase::Off:
         height = 0;
         voice.playing = false;
+        voice.on = false;
         break;
     }
 
@@ -338,9 +340,14 @@ bool sas_decode_next_block(const psprecomp::GuestMemory &memory, SasVoiceState &
         voice.remaining_samples = voice.total_samples;
     };
 
+    // The loop argument of sceSasSetVoice only enables the loop-end flag (3)
+    // inside the ADPCM data; it never wraps a voice that runs off the end of
+    // its buffer. LCS passes loop=1 for almost every sound (including the
+    // streamed dialogue buffers), so wrapping here made one-shot voice lines
+    // repeat forever.
     if (voice.decode_offset + 16u > static_cast<std::uint32_t>(voice.data_size)) {
-        if (!voice.loop) return false;
-        rewind_loop();
+        voice.finished = true;
+        return false;
     }
     const std::uint32_t relative_offset = voice.decode_offset;
     const std::uint32_t base = voice.data_address + relative_offset;
