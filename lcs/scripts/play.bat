@@ -28,6 +28,8 @@ if not exist "%GAME%\EBOOT.ELF" (
   exit /b 4
 )
 
+rem Your own settings: lcs\game\LCSNative.ini when it exists (git ignores that folder), otherwise the shipped defaults.
+if not defined PSPRECOMP_CONFIG if exist "%GAME%\LCSNative.ini" set "PSPRECOMP_CONFIG=%GAME%\LCSNative.ini"
 if not defined PSPRECOMP_CONFIG set "PSPRECOMP_CONFIG=%LCS_DIR%\config\LCSNative.ini"
 
 "%BIN%" --game "%GAME%" %1 %2 %3 %4 %5 %6 %7 %8 %9

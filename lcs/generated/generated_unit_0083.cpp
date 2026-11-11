@@ -3209,6 +3209,10 @@ L_089514F0:
     ctx.pc = jump_target;
     return;
 L_089514F8:
+    // The world's list of loaded chunks holds 32, with its count right after it. A longer view distance queues many
+    // small distant chunks, so it fills up: the 33rd overwrote the count and the game then crashed. A null chunk is
+    // this function's own "nothing to load"; the list starts again at the next sector swap.
+    if (aot_mem.aot_load32(ctx.gpr[4] + static_cast<std::uint32_t>(256)) >= 32u) ctx.gpr[5] = 0u;
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-48));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(32), ctx.gpr[16]);
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(36), ctx.gpr[17]);

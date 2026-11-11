@@ -10,7 +10,7 @@ Place your decrypted `EBOOT.ELF` and the disc's `PSP_GAME` folder in `game/` for
 
 ## Build
 
-Requires Visual Studio 2022 and LLVM (clang-cl).
+Requires Visual Studio 2022 or its Build Tools, with clang-cl from LLVM or from Visual Studio's "C++ Clang tools" component.
 
 ```text
 lcs\BUILD_LCS.bat
@@ -22,7 +22,7 @@ lcs\BUILD_LCS.bat
 lcs\PLAY_LCS.bat
 ```
 
-Settings are in `lcs/config/LCSNative.ini`.
+Settings are in `lcs/config/LCSNative.ini`. To keep your own apart from the defaults, copy it to `lcs/game/LCSNative.ini`: `play.bat` uses that one when it exists, and git ignores that folder.
 
 `Display.ResolutionMode` is the window (`PSP`, `Scale`, `Custom`, or
 `Desktop`). `Rendering.InternalResolutionMode` is the GE render
@@ -129,7 +129,7 @@ That way you will get a pre-confugred build environment which also utilzes [ccac
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
+MIT, see [`LICENSE`](LICENSE). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md). Projects whose ideas this one follows are credited in [`lcs/CREDITS.md`](lcs/CREDITS.md).
 
 ## Unattended engine stress test
 
