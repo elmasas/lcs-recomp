@@ -3517,6 +3517,16 @@ L_08A98D2C:
     ctx.pc = jump_target;
     return;
 L_08A98D3C:
+    // The movement stick's sideways push, which turns the follow camera on the PSP's one stick. Not while free-aiming:
+    // walking sideways strafes there, and only the mouse turns the aim.
+    if (lcs::lcs_free_aim_active()) {
+        ctx.gpr[2] = 0u;
+        jump_target = ctx.gpr[31];
+        local_pc = jump_target;
+        if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; }
+        ctx.pc = jump_target;
+        return;
+    }
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-32));
     ctx.gpr[5] = (static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(aot_mem.aot_load16(ctx.gpr[4] + static_cast<std::uint32_t>(0))))));
     if (lcs::lcs_camera_hook_enabled()) ctx.gpr[5] = (7u);

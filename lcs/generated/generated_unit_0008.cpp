@@ -1,3 +1,4 @@
+#include "lcs_free_aim_trace.hpp"
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
 #include <bit>
@@ -1699,6 +1700,18 @@ L_08824980:
     ctx.pc = jump_target;
     return;
 L_08824988:
+    // Adds a bullet trace (start a0, end a1, weapon type a2, shooter a3). A free-aim shot's trace starts at the gun, from
+    // a copy in the host's scratch area: the caller's own start stays on the camera ray (lcs_free_aim_trace.hpp).
+    {
+        float start[3], gun[3];
+        for (std::uint32_t i = 0; i < 3u; ++i) start[i] = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[4] + i * 4u));
+        if (lcs::lcs_free_aim_trace_from_gun(start, gun)) {
+            constexpr std::uint32_t kTraceStart = 0x0BF40100u;
+            for (std::uint32_t i = 0; i < 3u; ++i) aot_mem.aot_store32(kTraceStart + i * 4u, std::bit_cast<std::uint32_t>(gun[i]));
+            aot_mem.aot_store32(kTraceStart + 12u, 0u);
+            ctx.gpr[4] = kTraceStart;
+        }
+    }
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-80));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(48), ctx.gpr[16]);
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(52), ctx.gpr[17]);

@@ -560,6 +560,8 @@ HostInputState display_window_input() {
     HostInputState input{};
     const auto publish = [&]() -> HostInputState {
         lcs_camera_set_axes(input.camera_x, input.camera_y);
+        // While free-aiming: no sprint and no weapon switch (on foot, Cross and the d-pad's left and right).
+        if (lcs_free_aim_active()) input.buttons &= ~(kPspCross | kPspLeft | kPspRight);
         lcs_set_host_drive_inputs(input.accelerate, input.brake);
         cached = input;
         return cached;

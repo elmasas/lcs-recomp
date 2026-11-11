@@ -8853,6 +8853,9 @@ L_0894B7EC:
     ctx.gpr[4] = (0u | 1u);
     goto L_0894B7F0;
 L_0894B7F0:
+    // Free aim strafes as the game does when locked on: with the stick past 50 degrees off the camera (f22, the game's
+    // own angle), the back, left and right walks, the body kept to the camera. The lock-on target isn't needed.
+    if (lcs::lcs_free_aim_active()) ctx.gpr[4] = std::fabs(ctx.fpr[22]) > 0.87266463f ? 1u : 0u;
     if (ctx.gpr[4] == 0u) {
     ctx.gpr[4] = (static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + static_cast<std::uint32_t>(1720))))));
         goto L_0894B834;
@@ -8881,6 +8884,8 @@ L_0894B808:
     if (rt.invoke_chained_direct<&recomp_unit_0019_entry, 19u, 291u, 0x08851C88u>(ctx, &aot_mem) && ctx.pc == 0x0894B828u) goto L_0894B828;
     return;
 L_0894B828:
+    // The game strafes with one-handed guns only (0x08851C88). Free aim strafes with any gun, as Classic Axis does.
+    if (lcs::lcs_free_aim_active()) ctx.gpr[2] = 1u;
     { const bool branch_taken = ctx.gpr[2] != 0u;
     // nop
       if (branch_taken) {
