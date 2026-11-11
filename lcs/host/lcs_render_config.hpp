@@ -54,8 +54,14 @@ struct DisplayConfiguration {
     bool vsync{false};
     float hud_scale{1.0f};
     bool hud_at_edges{false};
+    // Main menu: skip it, the file name of a painting (lcs_frontend_menu.cpp) or "random", and how to enlarge it.
+    bool skip_main_menu{false};
+    std::string menu_art{"random"};
+    std::string menu_art_quality{"auto"};
     // Minutes between automatic save states (lcs_state.hpp); 0 turns them off.
     std::uint32_t auto_state_minutes{5u};
+    std::string menu_music{"intro"};
+    bool classic_pause{false};
     // Pictures shown by the game's button prompts: "original" or a folder name
     // under <config dir>/textures.
     std::string prompt_style{"original"};

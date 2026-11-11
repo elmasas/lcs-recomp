@@ -479,6 +479,8 @@ bool display_window_profile_key_pressed() {
     return pressed;
 }
 
+void display_window_request_close() {}
+
 bool display_window_closed() { return g_closed; }
 
 void display_window_request_fullscreen(bool enabled) noexcept {

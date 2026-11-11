@@ -31,5 +31,6 @@ struct HostInputState {
     std::uint8_t brake_pressure{};
 };
 [[nodiscard]] HostInputState display_window_input();
+void display_window_request_close();
 
 }

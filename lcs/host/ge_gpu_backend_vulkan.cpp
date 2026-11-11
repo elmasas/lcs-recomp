@@ -3059,6 +3059,9 @@ void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &he
     height = s.display_logical_height;
 }
 
+bool ge_gpu_backend_supports_host_frame() noexcept { return false; }
+bool ge_gpu_backend_present_host_frame() noexcept { return false; }
+
 bool ge_gpu_backend_finish_color_frame(std::uint64_t vblank) noexcept {
     VulkanState &s = state();
     std::lock_guard<std::recursive_mutex> guard(s.mutex);
