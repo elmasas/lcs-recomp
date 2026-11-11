@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "decomp.hpp"  // [decomp-hook]
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -6000,6 +6001,7 @@ L_0886AC10:
     ctx.pc = jump_target;
     return;
 L_0886AC24:
+    if (lcs::decomp::run<0x0886AC24u>(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [decomp-hook]
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-32));
     ctx.gpr[5] = (aot_mem.aot_load8(ctx.gpr[4] + static_cast<std::uint32_t>(0)));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(20), ctx.gpr[17]);
@@ -6050,6 +6052,7 @@ L_0886AC6C:
     ctx.pc = jump_target;
     return;
 L_0886AC80:
+    if (lcs::decomp::run<0x0886AC80u>(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [decomp-hook]
     jump_target = ctx.gpr[31];
     aot_mem.aot_store8(ctx.gpr[4] + static_cast<std::uint32_t>(0), static_cast<std::uint8_t>(0u));
     local_pc = jump_target;
@@ -6057,6 +6060,7 @@ L_0886AC80:
     ctx.pc = jump_target;
     return;
 L_0886AC88:
+    if (lcs::decomp::run<0x0886AC88u>(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [decomp-hook]
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-160));
     ctx.gpr[5] = (aot_mem.aot_load8(ctx.gpr[4] + static_cast<std::uint32_t>(0)));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(148), ctx.gpr[16]);
@@ -6369,6 +6373,7 @@ L_0886AEC4:
     ctx.pc = jump_target;
     return;
 L_0886AED8:
+    if (lcs::decomp::run<0x0886AED8u>(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [decomp-hook]
     ctx.gpr[6] = (0u | 0u);
     ctx.fpr[12] = std::bit_cast<float>(0u);
     ctx.gpr[5] = (ctx.gpr[4] | 0u);

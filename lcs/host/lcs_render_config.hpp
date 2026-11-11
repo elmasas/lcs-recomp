@@ -52,9 +52,10 @@ struct DisplayConfiguration {
     bool show_fps{false};
     bool vsync{false};
     float hud_scale{1.0f};
-    // Pictures shown by the game's button prompts: "original" or a folder name
-    // under <config dir>/textures.
-    std::string prompt_style{"original"};
+    // Pictures shown by the game's button prompts: "auto" (Xbox with a
+    // controller connected, else keyboard and mouse), "kb", "xbox",
+    // "original" or a folder name under <config dir>/textures.
+    std::string prompt_style{"auto"};
 };
 
 struct PresentationRectangle {
@@ -85,6 +86,17 @@ void lcs_set_fullscreen_setting(bool enabled) noexcept;
 void lcs_set_show_fps(bool enabled) noexcept;
 void lcs_set_frame_rate(std::uint32_t frame_rate) noexcept;
 void lcs_set_internal_resolution(InternalResolutionMode mode, std::uint32_t scale) noexcept;
+void lcs_set_vsync(bool enabled) noexcept;
+void lcs_set_anisotropic_filtering(std::uint32_t level) noexcept;
+void lcs_set_msaa(std::uint32_t samples) noexcept;
+void lcs_set_texture_lod_bias(float bias) noexcept;
+void lcs_set_hud_scale(float scale) noexcept;
+void lcs_set_mouse_sensitivity(std::uint32_t sensitivity) noexcept;
+void lcs_set_invert_camera_y(bool enabled) noexcept;
+// Replaces every key of the action with this one (None clears it).
+void lcs_set_key_binding(BindAction action, HostKey key) noexcept;
+// Keyboard and mouse bindings back to the defaults; controller bindings stay.
+void lcs_reset_key_bindings() noexcept;
 
 [[nodiscard]] PresentationRectangle calculate_presentation_rectangle(
     std::uint32_t client_width, std::uint32_t client_height,

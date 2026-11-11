@@ -30,14 +30,55 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## In-game settings pages
+
+The pause menu has two PC pages. Changes apply at once and are saved to
+`LCSNative.ini`.
+
+- **GRAPHICS** (the tab that was MULTIPLAYER, which cannot run on PC):
+  resolution, fullscreen, VSync, frame rate, view distance, anisotropic
+  filtering, MSAA, texture LOD bias (-5 to 5; negative is sharper), HUD
+  size, FPS counter. Left/right or Cross changes a row. Resolution,
+  anisotropic filtering, MSAA and LOD bias show `RESTART` until the game
+  is restarted.
+- **CONTROLS** first asks KEYBOARD AND MOUSE or CONTROLLER. CONTROLLER is
+  the game's own screen (configuration, type, invert look, legend).
+- **CONTROLS > KEYBOARD AND MOUSE**: choose an action with Cross, then
+  press the key or mouse button (or turn the wheel) to bind it. Esc
+  cancels; after 8 seconds it gives up. The new key replaces the
+  action's keys. MORE ACTIONS shows the second page. Mouse
+  sensitivity, invert mouse Y, and reset to defaults are below. Circle
+  (Backspace) returns to CONTROLS.
+
+The mouse works in the pause menu: point at a tab or a row to highlight
+it, left click selects, right click goes back, the wheel moves up and
+down.
+
+Aiming is manual (a free-aim reticle, as San Andreas on PC) whenever the
+keyboard and mouse were used last. With a controller, `Controls.AutoAim`
+decides whether the game locks on.
+
+Hint boxes name the bound keys: the game's `~k~ ~TOKEN~` text is resolved
+by `lcs/decomp/game/ControlText.cpp`, which maps each token to an action.
+They follow `Display.ButtonPrompts` (keys, Xbox buttons, or the original
+PSP text).
+
 ## Mouse and keyboard
 
-Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A
+Use the pause menu (above), or edit `[Controls]` in
+`lcs/config/LCSNative.ini`, then restart. A
 binding is one or more names separated by commas. `None` clears it.
 `Shift`, `Ctrl`, and `Alt` set both sides. The accepted names are
 commented in that file. F10 opens host settings. F11 toggles
 fullscreen. Moving the mouse looks around. A controller button
 takes the same action names.
+
+On-screen button prompts follow `Display.ButtonPrompts`. `Auto`
+(the default) shows Xbox glyphs when a controller is connected at
+start, otherwise the keys bound above (W, F, Space, left mouse
+button, and so on). `Keyboard` and `Xbox` force one style;
+`Original` keeps the PlayStation glyphs. The game paints these
+itself, so no texture dump is needed.
 
 | Binding | Default | Action |
 | --- | --- | --- |
@@ -126,6 +167,14 @@ Usage: ./build.sh <option>
 ```
 
 That way you will get a pre-confugred build environment which also utilzes [ccache](https://ccache.dev/) for faster building times.
+
+## Decompiled game code
+
+The controller code (`CPad`) and the pause menu's tables are hand-written
+C++ in `lcs/decomp/` and run in place of the recompiled originals. The menu
+drawing and input code is still recompiled. See
+[`lcs/decomp/README.md`](lcs/decomp/README.md) for what is covered, how to
+verify it against the original (`LCS_DECOMP=verify`), and how to add more.
 
 ## License
 

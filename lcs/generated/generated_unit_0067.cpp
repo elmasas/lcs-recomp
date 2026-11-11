@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_menu_pages.hpp"  // [lcs-menu-pages]
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -6450,6 +6451,7 @@ L_08913B60:
     ctx.pc = jump_target;
     return;
 L_08913B70:
+    if (lcs::lcs_menu_text_hook(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [lcs-menu-pages] CText::Get answers the PC menu keys
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-48));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(20), ctx.gpr[16]);
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(24), ctx.gpr[17]);

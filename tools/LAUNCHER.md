@@ -36,8 +36,13 @@ already inside the exe.
 
 ### HUD prompt packs (Xbox / keyboard)
 
-PlayStation is the game default and needs no extra files. Xbox and
-keyboard packs paint over dumped HUD canvases. Those dumps are **your
+LCSNative now paints the Xbox and keyboard glyphs itself as the HUD
+textures load (`lcs/host/lcs_prompt_glyphs.cpp`), from the live
+`[Controls]` bindings, so none of the steps below are required. The
+default `ButtonPrompts=Auto` picks Xbox with a controller connected and
+keyboard otherwise. A pack on disk, when present, still wins.
+
+The optional packs below paint over dumped HUD canvases. Those dumps are **your
 disc's textures** and are gitignored under `lcs/config/textures/` — they
 are not shipped in the repository.
 

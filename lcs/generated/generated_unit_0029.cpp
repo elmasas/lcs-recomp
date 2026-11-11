@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "decomp.hpp"  // [decomp-hook]
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -6832,6 +6833,7 @@ L_0887B510:
     ctx.pc = jump_target;
     return;
 L_0887B534:
+    if (lcs::decomp::run<0x0887B534u>(rt, ctx)) { jump_target = ctx.gpr[31]; local_pc = jump_target; if (++local_transfers < 2048u) { entry_id = 0u; goto LOCAL_DISPATCH; } ctx.pc = jump_target; return; }  // [decomp-hook]
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-560));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(528), ctx.gpr[16]);
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(536), ctx.gpr[18]);

@@ -2,14 +2,16 @@ set(FFMPEG_LIBS avcodec avformat avutil swresample swscale)
 set(FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ffmpeg)
 
 file(GLOB HOST_SOURCES CONFIGURE_DEPENDS host/*.cpp)
+# Hand-written replacements for recompiled game functions.
+file(GLOB DECOMP_SOURCES CONFIGURE_DEPENDS decomp/*.cpp decomp/game/*.cpp)
 list(REMOVE_ITEM HOST_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/host/pack_font5x7.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/host/main.cpp)
 # Share the real HLE implementations with the save-protection integration test.
-add_library(lcs_host OBJECT ${HOST_SOURCES})
+add_library(lcs_host OBJECT ${HOST_SOURCES} ${DECOMP_SOURCES})
 add_executable(LCSNative host/main.cpp)
 target_link_libraries(LCSNative PRIVATE lcs_host)
-target_include_directories(lcs_host PUBLIC host)
+target_include_directories(lcs_host PUBLIC host decomp)
 if(WIN32)
     target_include_directories(lcs_host PRIVATE ${FFMPEG_DIR}/include)
 endif()
@@ -113,7 +115,7 @@ endif()
 file(GLOB GENERATED_SOURCES CONFIGURE_DEPENDS generated/*.cpp)
 if(GENERATED_SOURCES)
     add_library(lcs_generated STATIC ${GENERATED_SOURCES})
-    target_include_directories(lcs_generated PRIVATE host)
+    target_include_directories(lcs_generated PRIVATE host decomp)
     target_link_libraries(lcs_generated PUBLIC psprecomp_core)
     if(MSVC)
         target_compile_options(lcs_generated PRIVATE /bigobj ${PSPRECOMP_MSVC_MP_FLAG}
@@ -148,6 +150,11 @@ if(PSPRECOMP_BUILD_TESTS)
         host/lcs_stress_controller.cpp)
     target_include_directories(lcs_stress_controller_test PRIVATE host ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME lcs_stress_controller_test COMMAND lcs_stress_controller_test)
+    add_executable(lcs_prompt_glyphs_test
+        ${CMAKE_SOURCE_DIR}/tests/lcs_prompt_glyphs_test.cpp
+        host/lcs_prompt_glyphs.cpp)
+    target_include_directories(lcs_prompt_glyphs_test PRIVATE host)
+    add_test(NAME lcs_prompt_glyphs_test COMMAND lcs_prompt_glyphs_test)
     add_executable(lcs_stress_safety_test ${CMAKE_SOURCE_DIR}/tests/lcs_stress_safety_test.cpp)
     target_link_libraries(lcs_stress_safety_test PRIVATE lcs_host)
     add_test(NAME lcs_stress_safety_test COMMAND lcs_stress_safety_test)

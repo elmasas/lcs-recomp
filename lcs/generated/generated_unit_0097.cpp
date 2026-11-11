@@ -2074,7 +2074,8 @@ L_08988C6C:
     if (!lcs::lcs_auto_aim()) {
         const std::uint32_t weapon_type = aot_mem.aot_load32(
             ctx.gpr[16] + 1428u + static_cast<std::uint32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + 1720u))) * 28u);
-        if (lcs::lcs_free_aim_weapon(weapon_type)) ctx.gpr[19] = 1u;
+        // Only while the aim button is held, as San Andreas on PC.
+        if (lcs::lcs_free_aim_weapon(weapon_type) && lcs::lcs_manual_aim_pose()) ctx.gpr[19] = 1u;
     }
     ctx.gpr[31] = (0x08988C74u);
     ctx.gpr[4] = (0u | 0u);

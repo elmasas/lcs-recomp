@@ -562,27 +562,19 @@ def build_prompt_pack(style: str, cfg: ControlsConfig | None = None,
                       config_dir: Path | None = None) -> Path | None:
     """Write `textures/<style>/` replacements. Original PlayStation needs no files.
 
-    Raises PromptPackError when Xbox/kb is requested but `_source` dumps are
-    missing, so the launcher cannot silently leave PlayStation glyphs in place.
+    LCSNative paints the Xbox and keyboard glyphs itself from the live
+    bindings (`lcs_prompt_glyphs.cpp`), so a pack is optional. Without the
+    `_source` dumps this writes nothing and the game paints the glyphs.
     """
     style = style.lower()
-    if style in ("original", "psp", "playstation", "off", "none", ""):
+    if style in ("original", "psp", "playstation", "off", "none", "auto", ""):
         return None
     root = config_dir or _config_dir()
-    source = root / "textures" / "_source"
     dest = root / "textures" / ("kb" if style in ("kb", "keyboard", "kbm") else "xbox")
     pack_style = "kb" if dest.name == "kb" else "xbox"
-    missing = missing_source_files(pack_style, root)
-    if missing:
-        preview = "\n".join(f"  - {path.name}" for path in missing[:8])
-        more = "" if len(missing) <= 8 else f"\n  … and {len(missing) - 8} more"
-        raise PromptPackError(
-            "HUD prompt sources are missing under "
-            f"{source}.\n{preview}{more}\n\n"
-            "These files are dumps from your own disc (not shipped in the repo).\n"
-            "1. Set LCS_TEXTURE_DUMP=1 and play until tutorial/pause HUD appears.\n"
-            "2. Run: python tools/prompt_pack.py install-sources\n"
-            "3. Save Xbox or Keyboard & mouse prompts again in the launcher.")
+    if missing_source_files(pack_style, root):
+        return None
+    source = root / "textures" / "_source"
     cfg = cfg or ControlsConfig.load(root / "LCSNative.ini") if (root / "LCSNative.ini").exists() else ControlsConfig()
     dest.mkdir(parents=True, exist_ok=True)
     written = 0

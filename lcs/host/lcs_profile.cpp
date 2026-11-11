@@ -1,5 +1,6 @@
 // LCS (GTA: Liberty City Stories) kernel HLE.
 
+#include "decomp.hpp"
 #include "lcs_profile.hpp"
 #include "display_window.hpp"
 #include "lcs_ge_exec.hpp"
@@ -12,6 +13,7 @@
 #include "lcs_frame_limit.hpp"
 #include "lcs_lang.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_menu_pages.hpp"
 #include "lcs_stress_test.hpp"
 #include "lcs_world_detail.hpp"
 
@@ -1889,6 +1891,7 @@ void ge_worker_shutdown() {
 }
 
 void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start) {
+    decomp::install(runtime);
     reset_world_detail();
     thread_table = ThreadTable{};
     lcs_menu_init(runtime);
@@ -1916,6 +1919,14 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
 
     partition_table = PartitionTable{};
     partition_table.next_address = (user_arena_start + 0xFFu) & ~0xFFu;
+    {
+        // Guest memory for the text of the PC pages in the pause menu
+        // (lcs_menu_pages.cpp), taken before the game's first allocation.
+        constexpr std::uint32_t kMenuPagesScratch = 0x2000u;
+        const std::uint32_t scratch = partition_table.next_address;
+        partition_table.next_address += kMenuPagesScratch;
+        lcs_menu_pages_install(runtime, scratch, kMenuPagesScratch);
+    }
     callback_table = CallbackTable{};
     semaphore_table = SemaphoreTable{};
     event_flag_table = EventFlagTable{};
@@ -3202,8 +3213,12 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 ctx.set_gpr(2, 0x80000103u);
                 return;
             }
-            const HostInputState host = stress_test_enabled()
-                ? stress_test_input(rt, {}) : display_window_input();
+            // LCS_DECOMP=verify runs the pad code twice; the second run has to
+            // see the sample the first one got.
+            static HostInputState last_host{};
+            if (!decomp::verify_reference_running())
+                last_host = stress_test_enabled() ? stress_test_input(rt, {}) : display_window_input();
+            const HostInputState host = last_host;
             const std::uint32_t buttons = host.buttons;
             for (std::uint32_t index = 0u; index < count; ++index) {
                 const std::uint32_t sample = destination + index * sample_size;

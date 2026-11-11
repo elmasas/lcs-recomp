@@ -6,6 +6,7 @@
 #include "lcs_controls.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_menu.hpp"
+#include "lcs_menu_pages.hpp"
 #include "lcs_key_bindings.hpp"
 #include "lcs_render_config.hpp"
 
@@ -585,13 +586,43 @@ HostInputState display_window_input() {
         cached = {};
         lcs_camera_set_axes(0, 0);
         lcs_set_host_drive_inputs(false, false);
+        lcs_set_host_vehicle_look(false, false);
+        return cached;
+    }
+    if (lcs_key_capture_active()) {
+        // The pause menu waits for a key to bind; the game gets no input.
+        std::array<bool, kHostKeyCount> down{};
+        const bool focused = g_window != nullptr && GetForegroundWindow() == g_window;
+        if (focused) {
+            const bool mouse_in_window = cursor_in_client(g_window);
+            for (std::size_t index = 1; index < down.size(); ++index) {
+                const HostKey key = static_cast<HostKey>(index);
+                if (host_key_is_mouse(key) && !mouse_in_window) continue;
+                const int virtual_key = win32_virtual_key(key);
+                down[index] = virtual_key != 0 && key_down(virtual_key);
+            }
+        }
+        const int wheel = g_wheel.exchange(0, std::memory_order_relaxed);
+        g_mouse_dx.store(0, std::memory_order_relaxed);
+        g_mouse_dy.store(0, std::memory_order_relaxed);
+        lcs_key_capture_update(down.data(), down.size(), focused ? wheel : 0);
+        cached = {};
+        lcs_camera_set_axes(0, 0);
+        lcs_set_host_drive_inputs(false, false);
+        lcs_set_host_vehicle_look(false, false);
         return cached;
     }
 
     HostInputState input{};
     const auto publish = [&]() -> HostInputState {
+        // Aiming stands still (lcs_manual_aim_pose); the mouse still turns.
+        if (lcs_manual_aim_pose()) {
+            input.analog_x = 128u;
+            input.analog_y = 128u;
+        }
         lcs_camera_set_axes(input.camera_x, input.camera_y);
         lcs_set_host_drive_inputs(input.accelerate, input.brake);
+        lcs_set_host_vehicle_look(input.look_left, input.look_right);
         cached = input;
         return cached;
     };
@@ -621,10 +652,28 @@ HostInputState display_window_input() {
             const int virtual_key = win32_virtual_key(key);
             return virtual_key != 0 && key_down(virtual_key);
         };
-        const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
+        // Menus, movies and cutscenes get the fixed PC menu keys. In the pause
+        // menu the mouse points and clicks: left is Cross, right is Circle.
+        const bool pause_menu = !in_game && lcs_menu_active();
+        const ControlBindings key_bindings =
+            pause_menu ? bindings_without_mouse(controls.bindings) : controls.bindings;
+        const KeyboardSample keys = in_game
+            ? sample_keyboard(controls.bindings, driving, is_down)
+            : sample_menu_keyboard(key_bindings, is_down);
         input.buttons |= keys.buttons;
+        if (pause_menu) {
+            if (is_down(HostKey::MouseLeft)) input.buttons |= kPspCross;
+            if (is_down(HostKey::MouseRight)) input.buttons |= kPspCircle;
+            RECT client{};
+            POINT cursor{};
+            if (GetClientRect(g_window, &client) && GetCursorPos(&cursor) && ScreenToClient(g_window, &cursor))
+                lcs_menu_pointer_from_client(mouse_in_window, cursor.x, cursor.y, client.right - client.left,
+                                             client.bottom - client.top);
+        }
         input.accelerate = keys.accelerate;
         input.brake = keys.brake;
+        input.look_left = keys.look_left;
+        input.look_right = keys.look_right;
         input.analog_x = static_cast<std::uint8_t>(
             std::clamp(128 + keys.move_x * keys.reach, 0, 255));
         input.analog_y = static_cast<std::uint8_t>(
@@ -638,6 +687,9 @@ HostInputState display_window_input() {
         };
         input.camera_x = camera_response(mouse_dx);
         input.camera_y = camera_response(-mouse_dy);
+        if (keys.buttons != 0u || keys.move_x != 0 || keys.move_y != 0 || mouse_dx != 0 || mouse_dy != 0 ||
+            wheel != 0)
+            lcs_note_input_device(false);
         if (capture) lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
         if (controls.invert_camera_y) input.camera_y = -input.camera_y;
     }
@@ -645,7 +697,11 @@ HostInputState display_window_input() {
     static int wheel_hold = 0;
     static std::uint32_t wheel_button = 0u;
     if (focused && wheel != 0) {
-        if (lcs_player_aiming()) {
+        if (!in_game && lcs_menu_active()) {
+            // The wheel moves up and down the pause menu.
+            wheel_button = wheel > 0 ? kPspUp : kPspDown;
+            wheel_hold = 4;
+        } else if (lcs_player_aiming()) {
             wheel_button = wheel > 0 ? kPspSquare : kPspCross;
             wheel_hold = 8;
         } else {
@@ -686,6 +742,11 @@ HostInputState display_window_input() {
                 return false;
             };
             const PadSample pad_sample = sample_pad(controls.bindings, driving, pad_down);
+            const auto deflected = [](std::int16_t value) { return value > 12000 || value < -12000; };
+            if (pad_sample.buttons != 0u || pad_sample.accelerate || pad_sample.brake ||
+                deflected(pad.gamepad.lx) || deflected(pad.gamepad.ly) || deflected(pad.gamepad.rx) ||
+                deflected(pad.gamepad.ry))
+                lcs_note_input_device(true);
             input.buttons |= pad_sample.buttons;
             if (pad_sample.accelerate) input.accelerate = true;
             if (pad_sample.brake) input.brake = true;

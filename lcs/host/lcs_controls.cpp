@@ -1,4 +1,6 @@
 #include "lcs_controls.hpp"
+
+#include "guest.hpp"
 #include "lcs_mouse.hpp"
 #include "lcs_frame_limit.hpp"
 
@@ -15,6 +17,8 @@ std::atomic<int> g_axis_x{0};
 std::atomic<int> g_axis_y{0};
 std::atomic<std::uint8_t> g_host_accelerate{0};
 std::atomic<std::uint8_t> g_host_brake{0};
+std::atomic<bool> g_host_look_left{false};
+std::atomic<bool> g_host_look_right{false};
 std::atomic<std::int64_t> g_last_vehicle_read_ms{0};
 std::atomic<std::int64_t> g_last_camera_read_ms{0};
 std::atomic<std::int64_t> g_last_mouse_camera_ms{0};
@@ -23,6 +27,8 @@ std::atomic<std::int32_t> g_mouse_camera_dy{0};
 std::atomic<std::int64_t> g_last_mouse_camera_take_ms{0};
 std::atomic<std::int64_t> g_last_aim_ms{0};
 std::atomic<bool> g_free_aim{false};
+std::atomic<bool> g_gamepad_in_use{false};
+std::atomic<bool> g_manual_aim_pose{false};
 
 constexpr std::uint32_t kPadCross = 42u;
 constexpr std::uint32_t kPadSquare = 38u;
@@ -151,11 +157,30 @@ float lcs_mouse_aim_pitch_angle(float game_angle, float fov) noexcept {
 }
 
 bool lcs_auto_aim() noexcept {
-    static const bool value = [] {
+    static const bool pad_auto_aim = [] {
         const LcsConfiguration &config = lcs_render_configuration();
         return !config.initialized || config.controls.auto_aim;
     }();
-    return value;
+    return pad_auto_aim && g_gamepad_in_use.load(std::memory_order_relaxed);
+}
+
+void lcs_note_input_device(bool gamepad) noexcept {
+    g_gamepad_in_use.store(gamepad, std::memory_order_relaxed);
+}
+
+bool lcs_using_gamepad() noexcept { return g_gamepad_in_use.load(std::memory_order_relaxed); }
+
+void lcs_set_manual_aim_pose(bool aiming) noexcept { g_manual_aim_pose.store(aiming, std::memory_order_relaxed); }
+
+bool lcs_manual_aim_pose() noexcept {
+    return !lcs_auto_aim() && g_manual_aim_pose.load(std::memory_order_relaxed);
+}
+
+bool lcs_manual_aim_held() noexcept {
+    if (lcs_auto_aim()) return false;
+    // Pads[0].NewState.RightShoulder1, what CPad::GetTarget (0x08A982F0) reads.
+    constexpr std::uint32_t kPad0RightShoulder1 = 0x08B89CA0u + 0x02u + 0x0Cu;
+    return decomp::guest_ref<std::int16_t>(kPad0RightShoulder1) != 0;
 }
 
 bool lcs_free_aim_weapon(std::uint32_t weapon_type) noexcept {
@@ -217,6 +242,14 @@ void lcs_set_host_drive_inputs(bool accelerate, bool brake,
     g_host_accelerate.store(accelerate ? 255u : throttle, std::memory_order_relaxed);
     g_host_brake.store(brake ? 255u : brake_pressure, std::memory_order_relaxed);
 }
+
+void lcs_set_host_vehicle_look(bool left, bool right) noexcept {
+    g_host_look_left.store(left, std::memory_order_relaxed);
+    g_host_look_right.store(right, std::memory_order_relaxed);
+}
+
+bool lcs_host_look_left() noexcept { return g_host_look_left.load(std::memory_order_relaxed); }
+bool lcs_host_look_right() noexcept { return g_host_look_right.load(std::memory_order_relaxed); }
 
 void lcs_note_vehicle_control_read() noexcept {
     g_last_vehicle_read_ms.store(now_ms(), std::memory_order_relaxed);
