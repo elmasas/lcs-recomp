@@ -52,17 +52,26 @@ Like an emulator's save states, and apart from the game's own saves: F5 saves th
 
 Every 5 minutes of play the game also saves a state on its own into Auto 1 to 3, replacing the oldest, so a crash costs at most a few minutes; the game pauses for about a frame while it does. F10, Game, Save states sets how often, or turns it off. The pause menu's States page lists every slot with when it was saved: pick one to load it, or to save into one of your own five. The game's own saving is untouched, and still the safer record of your progress.
 
+## GPS
+
+**GPS:** in a vehicle, a line on the radar follows the roads to your marker or the mission's objective. It doesn't know one-way streets or which bridges the story has opened yet. Turn it off or change its width under Game, in F10 or Options. The idea comes from [GPS Redux](https://github.com/juicermv/GTA-GPS-Redux) for San Andreas; none of its code is used.
+
 ## In-game menu
 
 ## Pause menu
 
 Esc opens one row of pages: Map, Brief, Stats, Game, Audio, Settings and Quit. A/D or Q/E move along the row, Enter goes into a page, and Esc comes back out, then closes the menu. Map, Brief, Stats, Game and Audio are the game's own pages, so the map, loading and stats work as they always have. Settings is the same screen as Options on the main menu, and its Game page also opens the game's own display, controls and language pages. To get the game's original pause menu back, turn on Settings, Game, Use the classic pause menu.
 
-F10 opens the settings on Windows. Settings are saved to `LCSNative.ini`.
+F10 opens the settings and the trainer on Windows. Settings are saved to `LCSNative.ini`. Nothing from the trainer is saved, except what a saved game itself keeps: every start goes back to the original game.
 
 | Page | What's there |
 | --- | --- |
 | Display, Graphics, Controls, Game | Window, resolution, view distance, frame rate, distant street lights, texture pack |
+| Player | God mode, the game's own cheats (weapons, money, health, armor, wanted level) and button cheats, spawn a car |
+| Teleport | Map marker, the mission's objective, the nearest road, a saved position |
+| World | Hold the time of day, game speed, weather, coordinates on screen |
+
+The trainer only uses the game itself: its own cheat routines and button codes, and fields of the player, the clock and the radar. A spawned car comes from the game's own vehicle cheat (the one behind its Rhino cheat), on the nearest road.
 
 ## Texture packs
 

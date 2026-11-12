@@ -11,6 +11,7 @@
 #include "lcs_pause_menu.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_texture_pack.hpp"
+#include "lcs_trainer.hpp"
 #include "lcs_settings.hpp"
 #include "lcs_settings_menu.hpp"
 
@@ -539,6 +540,15 @@ void register_settings() {
     }
 
     s = {};
+    s.id = "display.Gps"; s.tab = "Game"; s.group = "GPS"; s.title = "GPS line on the radar";
+    s.about = "In a vehicle, a line along the roads to your marker or the mission's objective.";
+    s.kind = Kind::Switch; s.fallback = 1;
+    s.get_value = [] { return config().display.gps ? 1 : 0; };
+    s.store = [](int v) { host_settings_write("display", "Gps", v != 0 ? "true" : "false"); };
+    s.take = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.gps = v != 0; }); };
+    opts::declare(s);
+
+    s = {};
     s.id = "display.AutoStateMinutes"; s.tab = "Game"; s.group = "Save states"; s.title = "Automatic state";
     s.about = "Saves a state every few minutes into Auto 1-3, replacing the oldest. The pause menu's States page loads them.";
     s.kind = Kind::List; s.fallback = 5;
@@ -549,6 +559,14 @@ void register_settings() {
     opts::declare(s);
 
     s = {};
+    s.id = "display.GpsWidth"; s.tab = "Game"; s.group = "GPS"; s.title = "GPS line width";
+    s.about = "How thick the line is."; s.kind = Kind::Number; s.lo = 1; s.hi = 6; s.fallback = 2;
+    s.get_value = [] { return static_cast<int>(config().display.gps_width); };
+    s.store = [](int v) { host_settings_write("display", "GpsWidth", std::to_string(v)); };
+    s.take = [](int v) { lcs_update_configuration([v](LcsConfiguration &c) { c.display.gps_width = static_cast<std::uint32_t>(v); }); };
+    opts::declare(s);
+
+    s = {};
     s.id = "audio.Volume"; s.tab = "Game"; s.group = "Sound"; s.title = "Master volume";
     s.about = "All game audio. Above 100 boosts it and can distort."; s.kind = Kind::Number; s.lo = 0; s.hi = 200;
     s.fallback = 100; s.shown_as = "%d%%"; s.when = When::NextLaunch;
@@ -556,6 +574,97 @@ void register_settings() {
     s.store = persist_int("audio", "Volume");
     opts::declare(s);
 
+    // ---- Trainer: the game's own cheats and a few helpers. Nothing here is saved: every start is the original game.
+    const auto action = [](const char *key, const char *page, const char *section, const char *label, const char *button,
+                           const char *help, TrainerAction what) {
+        Setting a;
+        a.id = key; a.tab = page; a.group = section; a.title = label; a.button_text = button; a.about = help;
+        a.kind = Kind::Button;
+        a.take = [what](int) { trainer_request(what); };
+        opts::declare(a);
+    };
+    const auto hold = [](const char *key, const char *page, const char *section, const char *label, const char *help,
+                         TrainerToggle what) {
+        Setting a;
+        a.id = key; a.tab = page; a.group = section; a.title = label; a.about = help; a.kind = Kind::Switch;
+        a.get_value = [what] { return trainer_toggle(what) ? 1 : 0; };
+        a.take = [what](int v) { trainer_set_toggle(what, v != 0); };
+        opts::declare(a);
+    };
+    const auto button = [](const char *key, const char *page, const char *section, const char *label, const char *text,
+                           const char *help, std::function<void(int)> run) {
+        Setting a;
+        a.id = key; a.tab = page; a.group = section; a.title = label; a.button_text = text; a.about = help;
+        a.kind = Kind::Button;
+        a.take = std::move(run);
+        opts::declare(a);
+    };
+
+    hold("trainer.god", "Player", "Health", "God mode", "Keeps health and armor very high. It doesn't stop every instant death: you still die with a vehicle that blows up around you.", TrainerToggle::GodMode);
+    action("trainer.health", "Player", "Health", "Health", "Fill", "The game's health cheat.", TrainerAction::Health);
+    action("trainer.armor", "Player", "Health", "Armor", "Fill", "The game's armor cheat.", TrainerAction::Armor);
+    action("trainer.money", "Player", "Money", "Money", "Add $250,000", "The game's money cheat.", TrainerAction::Money);
+    action("trainer.wantedup", "Player", "Police", "Wanted level", "Raise", "The game's wanted level cheat.", TrainerAction::WantedUp);
+    action("trainer.wantedclear", "Player", "Police", "Wanted level", "Clear", "The game's cheat that clears the wanted level.", TrainerAction::WantedClear);
+    action("trainer.weaponsa", "Player", "Weapons", "Weapon set 1", "Give", "The game's first weapons cheat.", TrainerAction::WeaponsA);
+    action("trainer.weaponsb", "Player", "Weapons", "Weapon set 2", "Give", "The game's second weapons cheat.", TrainerAction::WeaponsB);
+
+    {
+        Setting a;
+        a.id = "trainer.buttoncheat"; a.tab = "Player"; a.group = "The game's button cheats"; a.title = "Cheat";
+        a.about = "Entered as if typed on the pad. The game counts it as cheating in its statistics.";
+        a.kind = Kind::List; a.fallback = -1;
+        a.entries_now = [] {
+            std::vector<Entry> out;
+            for (const auto &[name, id] : trainer_button_cheats()) out.push_back({name, id});
+            return out;
+        };
+        opts::declare(a);
+    }
+    button("trainer.buttoncheatgo", "Player", "The game's button cheats", "Enter it", "Enter", "Takes about a second: don't press anything meanwhile.",
+           [](int) { if (const int v = opts::current("trainer.buttoncheat"); v >= 0) trainer_command(TrainerCommand::ButtonCheat, v); });
+
+    {
+        Setting a;
+        a.id = "trainer.vehicle"; a.tab = "Player"; a.group = "Vehicles"; a.title = "Car";
+        a.about = "Made by the game's own vehicle cheat, so the game counts it as cheating in its statistics.";
+        a.kind = Kind::List; a.fallback = trainer_vehicles().front().second;
+        a.entries_now = [] {
+            std::vector<Entry> out;
+            for (const auto &[name, id] : trainer_vehicles()) out.push_back({name, id});
+            return out;
+        };
+        opts::declare(a);
+    }
+    button("trainer.vehiclego", "Player", "Vehicles", "Spawn it", "Spawn", "On the road nearest to you, with you beside its door.",
+           [](int) { if (const int v = opts::current("trainer.vehicle"); v >= 0) trainer_command(TrainerCommand::SpawnVehicle, v); });
+
+    button("trainer.marker", "Teleport", "Map", "Map marker", "Go", "To the marker you set on the map.", [](int) { trainer_command(TrainerCommand::TeleportMarker); });
+    button("trainer.objective", "Teleport", "Map", "Next objective", "Go", "To the current mission's nearest objective on the radar.", [](int) { trainer_command(TrainerCommand::TeleportObjective); });
+    button("trainer.road", "Teleport", "Map", "Nearest road", "Go", "Out onto the road nearest to you: handy when you're stuck.", [](int) { trainer_command(TrainerCommand::TeleportNearestRoad); });
+    button("trainer.save", "Teleport", "Saved position", "Save position", "Save", "Remembers where you are.", [](int) { trainer_save_position(); });
+    button("trainer.return", "Teleport", "Saved position", "Return to position", "Return", "Back to the saved position.", [](int) { trainer_return_to_position(); });
+
+    s = {};
+    s.id = "trainer.hour"; s.tab = "World"; s.group = "Time"; s.title = "Hold time of day";
+    s.about = "Stops the clock at this hour."; s.kind = Kind::List; s.fallback = -1;
+    s.entries = {{"Off", -1}, {"06:00", 6}, {"09:00", 9}, {"12:00", 12}, {"15:00", 15}, {"18:00", 18}, {"21:00", 21}, {"00:00", 0}, {"03:00", 3}};
+    s.get_value = [] { return trainer_hold_hour(); };
+    s.take = [](int v) { trainer_set_hold_hour(v); };
+    opts::declare(s);
+    s = {};
+    s.id = "trainer.speed"; s.tab = "World"; s.group = "Time"; s.title = "Game speed";
+    s.about = "Slows down or speeds up the whole game."; s.kind = Kind::Number; s.lo = 10; s.hi = 300; s.fallback = 100; s.shown_as = "%d%%";
+    s.get_value = [] { return trainer_game_speed(); };
+    s.take = [](int v) { trainer_set_game_speed(v); };
+    opts::declare(s);
+    button("trainer.clocknow", "World", "Time", "Set clock to this computer's", "Set", "Sets the game's time to your local time.", [](int) { trainer_command(TrainerCommand::ClockFromComputer); });
+    action("trainer.sunny", "World", "Weather", "Sunny", "Set", "Forces this weather.", TrainerAction::WeatherSunny);
+    action("trainer.extrasunny", "World", "Weather", "Extra sunny", "Set", "Forces this weather.", TrainerAction::WeatherExtraSunny);
+    action("trainer.cloudy", "World", "Weather", "Cloudy", "Set", "Forces this weather.", TrainerAction::WeatherCloudy);
+    action("trainer.rainy", "World", "Weather", "Rainy", "Set", "Forces this weather.", TrainerAction::WeatherRainy);
+    action("trainer.foggy", "World", "Weather", "Foggy", "Set", "Forces this weather.", TrainerAction::WeatherFoggy);
+    hold("trainer.coords", "World", "Screen", "Show coordinates", "Your position, on screen.", TrainerToggle::ShowCoordinates);
 }
 
 bool initialize(ID3D12Device *device, ID3D12CommandQueue *queue, HWND window, DXGI_FORMAT format, UINT frames) {
@@ -668,8 +777,9 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
     if (g_failed) return;
     static const bool test_enabled = std::getenv("LCS_TEST_MENU") != nullptr;
     const bool open = host_settings_open();
+    const std::string overlay = trainer_overlay_text();
     const bool frontend = frontend_menu_active() || lcs_menu_active();
-    if (!open && !g_was_open && !test_enabled && !frontend) return;
+    if (!open && !g_was_open && !test_enabled && overlay.empty() && !frontend) return;
     g_device = device;
     if (!g_initialized) {
         if (!initialize(device, queue, window, format, frames_in_flight)) {
@@ -705,6 +815,15 @@ void imgui_menu_record(ID3D12Device *device, ID3D12CommandQueue *queue, ID3D12Gr
         host_settings_handle(HostSettingsKey::Close);
         opts::close_menu();
         g_was_open = false;
+    }
+    if (!overlay.empty()) {
+        ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, 12.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.45f);
+        ImGui::Begin("##trainer-overlay", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+        ImGui::TextUnformatted(overlay.c_str());
+        ImGui::End();
     }
     ImGui::Render();
     ID3D12DescriptorHeap *heaps[]{g_heap.Get()};
