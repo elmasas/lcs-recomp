@@ -37,7 +37,7 @@ PSP_TO_PAD = {
 # In-world ~k~ lines (atlas): gas is MoveForward (W), brake/reverse is
 # MoveBack (S), handbrake is Space. Circle is fire on foot, but the driving
 # tutorial uses that same cell for brake/reverse in this font — S first.
-# Pause-menu 16x16 chips stay Sprint / Attack (Space and LMB).
+# Pause-menu 16x16 chips show the menu's own keys for Cross and Circle, which no binding changes: see MenuKeyFilter.
 GLYPH_ACTIONS_ATLAS = {
     "cross": ["MoveForward", "Sprint"],
     "circle": ["MoveBack", "Handbrake", "Attack"],
@@ -46,6 +46,7 @@ GLYPH_ACTIONS_ATLAS = {
     "l": ["CenterCamera"],
     "r": ["Handbrake", "Aim"],
 }
+MENU_KEYS = {"cross": "Enter", "circle": "Escape"}
 GLYPH_ACTIONS_MENU = {
     "cross": ["Sprint", "MoveForward"],
     "circle": ["Attack"],
@@ -473,6 +474,8 @@ def _draw_prompt(pixels, width, cx, cy, size, glyph: str, style: str, cfg: Contr
 
 def _keyboard_key(cfg: ControlsConfig, glyph: str, pad: str | None, menu: bool) -> str | None:
     """First bound key of the PC action this HUD glyph should show."""
+    if menu and glyph in MENU_KEYS:
+        return MENU_KEYS[glyph]
     table = GLYPH_ACTIONS_MENU if menu else GLYPH_ACTIONS_ATLAS
     for action in table.get(glyph, ()):
         keys = cfg.actions.get(action) or []

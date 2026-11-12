@@ -2850,6 +2850,14 @@ bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescripto
     return prepare_texture(s, draw, width, height, mip_levels, std::move(packed));
 }
 
+bool ge_gpu_backend_upload_shared_texture(const GeGpuDrawDescriptor &draw, std::uint32_t width, std::uint32_t height,
+                                          std::shared_ptr<const std::vector<std::byte>> rgba8, std::uint32_t,
+                                          std::shared_ptr<const std::vector<std::byte>>) noexcept {
+    // The full-size image only: the smaller levels of a pack image are used by the DirectX 12 backend so far.
+    if (!rgba8) return false;
+    return ge_gpu_backend_upload_decoded_texture_chain_packed(draw, width, height, 1u, std::vector<std::byte>(*rgba8));
+}
+
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte> destination) noexcept {
     VulkanState &s = state();
     std::lock_guard<std::recursive_mutex> guard(s.mutex);
@@ -2870,13 +2878,16 @@ void ge_gpu_backend_accumulate_color_triangles(const GeGpuDrawDescriptor &draw,
     }
     const bool sampled = draw.texture_enabled && ge_gpu_backend_texture_available(draw);
     const std::uint32_t first = static_cast<std::uint32_t>(s.vertices.size());
+    // Grown once and written in place, as in the DirectX 12 backend.
+    s.vertices.resize(first + triangle_vertices.size());
+    UploadVertex *out = s.vertices.data() + first;
     for (const GeGpuVertex &source : triangle_vertices) {
         UploadVertex vertex = make_upload_vertex(source);
         if (sampled && draw.texture_width != 0u && draw.texture_height != 0u) {
             vertex.u /= static_cast<float>(draw.texture_width);
             vertex.v /= static_cast<float>(draw.texture_height);
         }
-        s.vertices.push_back(vertex);
+        *out++ = vertex;
     }
     Batch batch{};
     batch.draw = draw;
@@ -2910,18 +2921,21 @@ void ge_gpu_backend_accumulate_hardware_triangles(
     }
     const std::uint32_t first_vertex = static_cast<std::uint32_t>(s.vertices.size());
     const std::uint32_t first_index = static_cast<std::uint32_t>(s.indices.size());
+    s.vertices.resize(first_vertex + vertices.size());  // grown once and written in place
+    UploadVertex *out = s.vertices.data() + first_vertex;
+    for (const GeGpuVertex &source : vertices) *out++ = make_upload_vertex(source);
     if (indexed) {
-        for (const GeGpuVertex &source : vertices) s.vertices.push_back(make_upload_vertex(source));
+        s.indices.resize(first_index + triangle_indices.size());
+        std::uint32_t *index_out = s.indices.data() + first_index;
         for (std::uint32_t index : triangle_indices) {
             if (index >= vertices.size()) {
                 s.vertices.resize(first_vertex);
+                s.indices.resize(first_index);
                 ++s.report.game_vertex_overflows;
                 return;
             }
-            s.indices.push_back(index);
+            *index_out++ = index;
         }
-    } else {
-        for (const GeGpuVertex &source : vertices) s.vertices.push_back(make_upload_vertex(source));
     }
     const std::uint32_t logical = std::max<std::uint32_t>(1u, transform.logical_prim_batches);
     Batch batch{};
@@ -3044,6 +3058,9 @@ void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &he
     width = s.display_logical_width;
     height = s.display_logical_height;
 }
+
+bool ge_gpu_backend_supports_host_frame() noexcept { return false; }
+bool ge_gpu_backend_present_host_frame() noexcept { return false; }
 
 bool ge_gpu_backend_finish_color_frame(std::uint64_t vblank) noexcept {
     VulkanState &s = state();

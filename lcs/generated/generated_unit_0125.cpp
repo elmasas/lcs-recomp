@@ -1,5 +1,7 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_lod_lights.hpp"
+#include "lcs_render_config.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -5043,6 +5045,8 @@ L_089FA1BC:
     ctx.pc = jump_target;
     return;
 L_089FA1C8:
+    // CCoronas::UpdateCoronaCoors: the same draw distance as RegisterCorona.
+    ctx.fpr[12] = ctx.fpr[12] * lcs::corona_distance_scale();
     ctx.gpr[6] = (2232u << 16u);
     ctx.gpr[6] = (ctx.gpr[6] + static_cast<std::uint32_t>(12960));
     ctx.fpr[14] = std::bit_cast<float>(aot_mem.aot_load32(ctx.gpr[5] + static_cast<std::uint32_t>(0)));
@@ -6681,6 +6685,7 @@ L_089FAE44:
     ctx.gpr[2] = (16928u << 16u);
     ctx.gpr[4] = (ctx.gpr[16] + ctx.gpr[18]);
     ctx.fpr[18] = std::bit_cast<float>(ctx.gpr[2]);
+    ctx.fpr[18] = lcs::lamp_pool_distance();  // the 40 here is how far a lamp lights the ground
     ctx.gpr[7] = (ctx.gpr[29] + static_cast<std::uint32_t>(80));
     ctx.gpr[5] = (0u | 2u);
     ctx.gpr[8] = (0u | 128u);
@@ -6720,6 +6725,7 @@ L_089FAEAC:
     ctx.gpr[2] = (16928u << 16u);
     ctx.gpr[4] = (ctx.gpr[16] + ctx.gpr[18]);
     ctx.fpr[18] = std::bit_cast<float>(ctx.gpr[2]);
+    ctx.fpr[18] = lcs::lamp_pool_distance();  // the 40 here is how far a lamp lights the ground
     ctx.gpr[7] = (ctx.gpr[29] + static_cast<std::uint32_t>(80));
     ctx.gpr[5] = (0u | 2u);
     ctx.gpr[8] = (0u | 0u);
@@ -7092,6 +7098,8 @@ L_089FB1F8:
     ctx.gpr[4] = (ctx.gpr[18] + ctx.gpr[4]);
     ctx.gpr[20] = (static_cast<std::uint32_t>(static_cast<std::int32_t>(ctx.gpr[4]) >> 1u));
     ctx.gpr[4] = (0u | 8u);
+    // Distant lights, drawn at the point where Project2DFX hooks CCoronas::Render.
+    lcs::lod_lights_render(rt, ctx);
     ctx.gpr[31] = (0x089FB228u);
     ctx.gpr[5] = (0u | 0u);
     if (rt.invoke_chained_direct<&recomp_unit_0044_entry, 44u, 593u, 0x088B7AF8u>(ctx, &aot_mem) && ctx.pc == 0x089FB228u) goto L_089FB228;

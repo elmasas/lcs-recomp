@@ -235,6 +235,12 @@ void audio_output_advance(std::uint64_t guest_time_us) {
     host.mixer.advance(guest_time_us, host.device);
 }
 
+void audio_output_restart_timeline() {
+    AudioHost &host = audio_host();
+    std::lock_guard<std::mutex> guard(host.mutex);
+    host.mixer.restart_timeline();
+}
+
 void audio_output_reset_channel(std::uint32_t channel) {
     AudioHost &host = audio_host();
     std::lock_guard<std::mutex> guard(host.mutex);

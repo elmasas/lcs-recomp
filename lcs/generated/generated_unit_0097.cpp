@@ -2046,8 +2046,8 @@ L_08988C30:
     ctx.gpr[4] = (2232u << 16u);
     goto L_08988C38;
 L_08988C38:
-    // Third person crosshair mode.
-    if (!lcs::lcs_auto_aim()) aot_mem.aot_store8(0x08B35BDCu, 1u);
+    // Third person crosshair mode, while free-aiming (right mouse held).
+    if (lcs::lcs_free_aim_active()) aot_mem.aot_store8(0x08B35BDCu, 1u);
     ctx.gpr[4] = (ctx.gpr[4] + static_cast<std::uint32_t>(12960));
     ctx.gpr[5] = (aot_mem.aot_load8(ctx.gpr[4] + static_cast<std::uint32_t>(127)));
     ctx.gpr[4] = (ctx.gpr[4] + static_cast<std::uint32_t>(400));
@@ -2070,8 +2070,8 @@ L_08988C64:
       goto L_08988C6C;
     }
 L_08988C6C:
-    // Third person crosshair for guns.
-    if (!lcs::lcs_auto_aim()) {
+    // Third person crosshair for guns, while free-aiming.
+    if (lcs::lcs_free_aim_active()) {
         const std::uint32_t weapon_type = aot_mem.aot_load32(
             ctx.gpr[16] + 1428u + static_cast<std::uint32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + 1720u))) * 28u);
         if (lcs::lcs_free_aim_weapon(weapon_type)) ctx.gpr[19] = 1u;
@@ -2223,7 +2223,7 @@ L_08988D8C:
       goto L_08988DC8;
     }
 L_08988DC8:
-    if (!lcs::lcs_auto_aim()) { ctx.fpr[12] = 240.0f; ctx.fpr[13] = 108.8f; }
+    if (lcs::lcs_free_aim_active()) { ctx.fpr[12] = 240.0f; ctx.fpr[13] = 136.0f; }
     ctx.gpr[4] = (static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(aot_mem.aot_load8(ctx.gpr[16] + static_cast<std::uint32_t>(1720))))));
     ctx.gpr[5] = (ctx.gpr[4] << 5u);
     ctx.gpr[4] = (ctx.gpr[4] << 2u);
@@ -2242,7 +2242,7 @@ L_08988DEC:
     ctx.gpr[4] = (16793u << 16u);
     ctx.gpr[4] = (ctx.gpr[4] | 39322u);
     ctx.fpr[15] = std::bit_cast<float>(ctx.gpr[4]);
-    if (!lcs::lcs_auto_aim()) ctx.fpr[15] *= 0.6f;
+    if (lcs::lcs_free_aim_active()) ctx.fpr[15] *= 0.6f;
     ctx.fpr[14] = ctx.fpr[12] + ctx.fpr[15];
     ctx.gpr[5] = (2277u << 16u);
     ctx.fpr[17] = ctx.fpr[13] - ctx.fpr[15];
@@ -2290,13 +2290,13 @@ L_08988E70:
       goto L_08988E78;
     }
 L_08988E78:
-    if (!lcs::lcs_auto_aim()) { ctx.fpr[12] = 240.0f; ctx.fpr[13] = 108.8f; }
+    if (lcs::lcs_free_aim_active()) { ctx.fpr[12] = 240.0f; ctx.fpr[13] = 136.0f; }
     ctx.gpr[4] = (16716u << 16u);
     goto L_08988E7C;
 L_08988E7C:
     ctx.gpr[4] = (ctx.gpr[4] | 52429u);
     ctx.fpr[15] = std::bit_cast<float>(ctx.gpr[4]);
-    if (!lcs::lcs_auto_aim()) ctx.fpr[15] *= 0.6f;
+    if (lcs::lcs_free_aim_active()) ctx.fpr[15] *= 0.6f;
     ctx.fpr[14] = ctx.fpr[12] + ctx.fpr[15];
     ctx.gpr[5] = (2277u << 16u);
     ctx.fpr[17] = ctx.fpr[13] - ctx.fpr[15];

@@ -1,12 +1,21 @@
+#include "lcs_frontend_menu.hpp"
+#include "lcs_frontend_options.hpp"
+#include "lcs_radio_wheel.hpp"
+#include "lcs_weapon_wheel.hpp"
 #include "display_window.hpp"
 
+#include <string>
+#include <iostream>
 #include <span>
 #include "ge_gpu_backend.hpp"
 #include "lcs_mouse.hpp"
 #include "lcs_controls.hpp"
 #include "lcs_display_menu.hpp"
+#include "lcs_perf_log.hpp"
+#include "lcs_imgui_menu.hpp"
 #include "lcs_menu.hpp"
 #include "lcs_key_bindings.hpp"
+#include "lcs_state.hpp"
 #include "lcs_render_config.hpp"
 
 #if defined(_WIN32)
@@ -289,17 +298,11 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             host_settings_note_fullscreen(g_fullscreen);
             return 0;
         }
-        if (host_settings_open()) {
-            if (wparam == VK_UP) host_settings_handle(HostSettingsKey::Up);
-            else if (wparam == VK_DOWN) host_settings_handle(HostSettingsKey::Down);
-            else if (wparam == VK_LEFT) host_settings_handle(HostSettingsKey::Left);
-            else if (wparam == VK_RIGHT) host_settings_handle(HostSettingsKey::Right);
-            else if (wparam == VK_ESCAPE && !repeat) {
-                host_settings_handle(HostSettingsKey::Close);
-                discard_pending_pointer();
-            }
-            return 0;
-        }
+    }
+    // The open menu takes the keyboard and mouse. Only keys it consumes stop here: the rest still reach Windows.
+    if (imgui_menu_note_message(hwnd, message, wparam, lparam)) {
+        discard_pending_pointer();
+        return 0;
     }
     if (message == WM_ACTIVATE) {
         update_cursor_clip(hwnd, LOWORD(wparam) != WA_INACTIVE && HIWORD(wparam) == 0);
@@ -331,6 +334,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             }
         }
         return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+    if (message == WM_SETCURSOR && LOWORD(lparam) == HTCLIENT && (host_settings_open() || frontend_menu_active())) {
+        SetCursor(LoadCursorA(nullptr, IDC_ARROW));
+        return TRUE;
     }
     if (message == WM_SETCURSOR && LOWORD(lparam) == HTCLIENT && !lcs_menu_active()) {
         SetCursor(nullptr);
@@ -437,6 +444,10 @@ void display_window_attach_gpu_backend() {
 }
 
 bool display_window_closed() { return g_closed; }
+
+void display_window_request_close() {
+    if (g_window != nullptr) PostMessageW(g_window, WM_CLOSE, 0u, 0);
+}
 
 std::atomic<int> g_fullscreen_request{-1};
 
@@ -589,8 +600,17 @@ HostInputState display_window_input() {
     }
 
     HostInputState input{};
+    bool g_radio_key_held = false, g_radio_pad_held = false, g_weapon_key_held = false, g_weapon_pad_held = false;
     const auto publish = [&]() -> HostInputState {
+        frontend_options_note_input(input.buttons);
+        radio_wheel_input(g_radio_key_held || g_radio_pad_held, lcs_player_in_vehicle() && !lcs_menu_active() && !frontend_menu_active() && !host_settings_open());
+        // On foot: the weapon wheel (not while free-aiming, when the weapon can't change).
+        weapon_wheel_input(g_weapon_key_held || g_weapon_pad_held,
+                           !lcs_player_in_vehicle() && lcs_camera_in_use() && !lcs_free_aim_active() && !lcs_menu_active() &&
+                               !frontend_menu_active() && !host_settings_open());
         lcs_camera_set_axes(input.camera_x, input.camera_y);
+        // While free-aiming: no sprint and no weapon switch (on foot, Cross and the d-pad's left and right).
+        if (lcs_free_aim_active()) input.buttons &= ~(kPspCross | kPspLeft | kPspRight);
         lcs_set_host_drive_inputs(input.accelerate, input.brake);
         cached = input;
         return cached;
@@ -600,7 +620,7 @@ HostInputState display_window_input() {
     const std::int32_t mouse_dy = g_mouse_dy.exchange(0, std::memory_order_relaxed);
     const bool focused = g_window != nullptr && GetForegroundWindow() == g_window;
     static bool was_captured = false;
-    const bool in_game = lcs_camera_in_use() && !lcs_menu_active();
+    const bool in_game = lcs_camera_in_use() && !lcs_menu_active() && !frontend_menu_active();
     const bool moving_window = focused && (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 &&
                                GetCapture() != nullptr;
     const bool capture = focused && in_game && !moving_window && !IsIconic(g_window);
@@ -614,14 +634,78 @@ HostInputState display_window_input() {
     const bool driving = lcs_player_in_vehicle();
     const ControlsConfiguration &controls = lcs_render_configuration().controls;
 
-    if (focused) {
+    // LCS_TEST_KEYS="seconds:Key;...": presses keys for 0.2 s through the same path, without the real keyboard or focus.
+    struct TestKey {
+        double at;
+        HostKey key;
+        double hold;
+    };
+    static const std::vector<TestKey> test_keys = [] {
+        std::vector<TestKey> keys;
+        const char *text = std::getenv("LCS_TEST_KEYS");
+        std::string rest = text != nullptr ? text : "";
+        while (!rest.empty()) {
+            const auto end = rest.find(';');
+            const std::string item = rest.substr(0u, end);
+            rest = end == std::string::npos ? std::string{} : rest.substr(end + 1u);
+            const auto colon = item.find(':');
+            if (colon == std::string::npos) continue;
+            HostKey key{}, extra{};
+            std::string name = item.substr(colon + 1u);
+            double hold = 0.2;  // "12:Tab*2" holds it for 2 s
+            if (const auto star = name.find('*'); star != std::string::npos) {
+                hold = std::atof(name.c_str() + star + 1u);
+                name.resize(star);
+            }
+            if (lookup_host_key(normalize_binding_token(name), key, extra))
+                keys.push_back({std::atof(item.c_str()), key, hold});
+        }
+        return keys;
+    }();
+    static const auto test_start = std::chrono::steady_clock::now();
+    const double test_now = std::chrono::duration<double>(std::chrono::steady_clock::now() - test_start).count();
+    if (focused || !test_keys.empty()) {
         const bool mouse_in_window = cursor_in_client(g_window);
         const auto is_down = [&](HostKey key) {
+            for (const TestKey &test : test_keys) {
+                if (test.key == key && test_now >= test.at && test_now < test.at + test.hold) return true;
+            }
+            if (!test_keys.empty()) return false;
             if (host_key_is_mouse(key) && !mouse_in_window) return false;
             const int virtual_key = win32_virtual_key(key);
             return virtual_key != 0 && key_down(virtual_key);
         };
-        const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
+        {   // Save-state keys: one action per press.
+            static bool f5_was = false, f6_was = false, f7_was = false;
+            const bool f5 = is_down(HostKey::F5), f6 = is_down(HostKey::F6), f7 = is_down(HostKey::F7);
+            if (f5 && !f5_was) lcs_state_hotkey_save();
+            if (f6 && !f6_was) lcs_state_hotkey_next_slot();
+            if (f7 && !f7_was) lcs_state_hotkey_load();
+            f5_was = f5; f6_was = f6; f7_was = f7;
+            // With metrics on: the Pause key marks a stutter the player felt, for the report. Away from F5-F7, so that it
+            // isn't pressed by mistake for a state key.
+            static bool mark_was = false;
+            const bool mark = test_keys.empty() && key_down(VK_PAUSE);
+            if (mark && !mark_was && perf::mark()) host_toast("Stutter marked");
+            mark_was = mark;
+        }
+        static MenuKeyFilter menu_keys;
+        const bool game_menu = lcs_menu_active() || frontend_menu_active();
+        const bool gameplay = (lcs_camera_in_use() || !lcs_camera_hook_enabled()) && !frontend_menu_active();
+        const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, game_menu, gameplay, is_down);
+        g_radio_key_held = action_held(controls.bindings, BindAction::RadioWheel, is_down);
+        g_weapon_key_held = action_held(controls.bindings, BindAction::WeaponWheel, is_down);
+        if (!test_keys.empty()) {
+            static std::uint32_t last_buttons = 0xFFFFFFFFu;
+            static bool last_menu = false;
+            static bool last_gameplay = false;
+            if (keys.buttons != last_buttons || game_menu != last_menu || gameplay != last_gameplay) {
+                last_gameplay = gameplay;
+                std::cerr << "[menu-keys] t=" << test_now << " menu=" << game_menu << " gameplay=" << gameplay << " buttons=0x" << std::hex << keys.buttons << std::dec << "\n";
+                last_buttons = keys.buttons;
+                last_menu = game_menu;
+            }
+        }
         input.buttons |= keys.buttons;
         input.accelerate = keys.accelerate;
         input.brake = keys.brake;
@@ -638,7 +722,17 @@ HostInputState display_window_input() {
         };
         input.camera_x = camera_response(mouse_dx);
         input.camera_y = camera_response(-mouse_dy);
-        if (capture) lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
+        if (radio_wheel_open()) {  // the mouse points at stations
+            radio_wheel_pointer_mouse(mouse_dx, mouse_dy);
+            input.camera_x = 0;
+            input.camera_y = 0;
+        } else if (weapon_wheel_open()) {  // or at weapons
+            weapon_wheel_pointer_mouse(mouse_dx, mouse_dy);
+            input.camera_x = 0;
+            input.camera_y = 0;
+        } else if (capture) {
+            lcs_add_mouse_camera_delta(mouse_dx, mouse_dy);
+        }
         if (controls.invert_camera_y) input.camera_y = -input.camera_y;
     }
 
@@ -685,6 +779,10 @@ HostInputState display_window_input() {
                 }
                 return false;
             };
+            for (std::size_t button = 0u; button < static_cast<std::size_t>(PadButton::Count); ++button) {
+                if (pad_down(static_cast<PadButton>(button)) && pad_has(controls.bindings, static_cast<PadButton>(button), BindAction::RadioWheel)) g_radio_pad_held = true;
+                if (pad_down(static_cast<PadButton>(button)) && pad_has(controls.bindings, static_cast<PadButton>(button), BindAction::WeaponWheel)) g_weapon_pad_held = true;
+            }
             const PadSample pad_sample = sample_pad(controls.bindings, driving, pad_down);
             input.buttons |= pad_sample.buttons;
             if (pad_sample.accelerate) input.accelerate = true;
@@ -702,7 +800,15 @@ HostInputState display_window_input() {
                 }
             };
             apply_stick(pad.gamepad.lx, pad.gamepad.ly, controls.bindings.left_stick);
-            apply_stick(pad.gamepad.rx, pad.gamepad.ry, controls.bindings.right_stick);
+            if (radio_wheel_open() || weapon_wheel_open()) {
+                const float x = static_cast<float>(pad.gamepad.rx) / 32767.0f, y = -static_cast<float>(pad.gamepad.ry) / 32767.0f;
+                if (std::hypot(x, y) > 0.35f) {
+                    if (radio_wheel_open()) radio_wheel_pointer_stick(x, y);
+                    else weapon_wheel_pointer_stick(x, y);
+                }
+            } else {
+                apply_stick(pad.gamepad.rx, pad.gamepad.ry, controls.bindings.right_stick);
+            }
         }
     }
     return publish();

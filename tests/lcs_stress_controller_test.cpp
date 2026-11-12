@@ -212,6 +212,9 @@ int main() {
         const std::string shot_bytes((std::istreambuf_iterator<char>(shot_in)), {});
         const std::string latest_bytes((std::istreambuf_iterator<char>(latest_in)), {});
         check(!shot_bytes.empty() && shot_bytes == latest_bytes, "latest ppm should match the closed file");
+        // Windows cannot delete a file that is still open.
+        shot_in.close();
+        latest_in.close();
         std::filesystem::remove_all(dir);
         lcs::VehicleSample cars[3] = {{100.0f, 0.0f, 0.0f}, {4.0f, 1.0f, 0.0f}, {8.0f, 0.0f, 0.0f}};
         check(lcs::nearest_vehicle(0.0f, 0.0f, 0.0f, cars, 3, 80.0f) == 1,

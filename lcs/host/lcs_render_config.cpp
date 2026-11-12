@@ -2,6 +2,7 @@
 #include "lcs_widescreen.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cerrno>
@@ -193,6 +194,56 @@ void apply_display_key(LcsConfiguration &config, const std::string &key,
             warning(config, line, "Display.HudScale must be between 0.25 and 1.0");
         return;
     }
+    if (key == "skipmainmenu") {
+        if (!parse_bool(value, config.display.skip_main_menu))
+            warning(config, line, "Display.SkipMainMenu must be true or false");
+        return;
+    }
+    if (key == "menuart") {
+        config.display.menu_art = std::string(value);
+        return;
+    }
+    if (key == "menuartquality") {
+        config.display.menu_art_quality = std::string(value);
+        // Older settings files may say "sharp" or "xbrz", an upscaler since removed: read them as automatic.
+        const std::string quality = lowercase_copy(config.display.menu_art_quality);
+        if (quality == "sharp" || quality == "xbrz") config.display.menu_art_quality = "auto";
+        return;
+    }
+    if (key == "radiowheelslowmotion") {
+        if (!parse_bool(value, config.display.radio_wheel_slow_motion))
+            warning(config, line, "Display.RadioWheelSlowMotion must be true or false");
+        return;
+    }
+    if (key == "classicpause") {
+        if (!parse_bool(value, config.display.classic_pause))
+            warning(config, line, "Display.ClassicPause must be true or false");
+        return;
+    }
+    if (key == "gps") {
+        if (!parse_bool(value, config.display.gps))
+            warning(config, line, "Display.Gps must be true or false");
+        return;
+    }
+    if (key == "autostateminutes") {
+        if (!parse_u32(value, 0u, 60u, config.display.auto_state_minutes))
+            warning(config, line, "Display.AutoStateMinutes must be 0 (off) to 60");
+        return;
+    }
+    if (key == "gpswidth") {
+        if (!parse_u32(value, 1u, 6u, config.display.gps_width))
+            warning(config, line, "Display.GpsWidth must be 1 to 6");
+        return;
+    }
+    if (key == "menumusic") {
+        config.display.menu_music = std::string(value);
+        return;
+    }
+    if (key == "hudatedges") {
+        if (!parse_bool(value, config.display.hud_at_edges))
+            warning(config, line, "Display.HudAtEdges must be true or false");
+        return;
+    }
     if (key == "buttonprompts" || key == "promptstyle") {
         const std::string style = lowercase_copy(trim_copy(value));
         const std::string forbidden = "/\\<>:\"|?* ";
@@ -295,6 +346,49 @@ void apply_rendering_key(LcsConfiguration &config, const std::string &key,
     if (key == "texturelodbias" || key == "mipbias" || key == "lodbias") {
         if (!parse_float(value, -8.0f, 8.0f, config.rendering.texture_lod_bias))
             warning(config, line, "Rendering.TextureLodBias must be between -8 and 8");
+        return;
+    }
+    if (key == "lodlights") {
+        if (!parse_bool(value, config.rendering.lod_lights))
+            warning(config, line, "Rendering.LodLights expects true/false");
+        return;
+    }
+    if (key == "lodlightsrange") {
+        if (!parse_float(value, 100.0f, 4000.0f, config.rendering.lod_lights_range))
+            warning(config, line, "Rendering.LodLightsRange must be between 100 and 4000");
+        return;
+    }
+    if (key == "lamppatches") {
+        if (!parse_bool(value, config.rendering.lamp_patches))
+            warning(config, line, "Rendering.LampPatches must be true or false");
+        return;
+    }
+    if (key == "lamppatchrange") {
+        if (!parse_float(value, 100.0f, 2000.0f, config.rendering.lamp_patch_range))
+            warning(config, line, "Rendering.LampPatchRange must be 100 to 2000");
+        return;
+    }
+    if (key == "lamppoolrange") {
+        if (!parse_float(value, 10.0f, 1000.0f, config.rendering.lamp_pool_range))
+            warning(config, line, "Rendering.LampPoolRange must be 10 to 1000");
+        return;
+    }
+    if (key == "lodlightsradius") {
+        if (!parse_float(value, 0.01f, 10.0f, config.rendering.lod_lights_radius))
+            warning(config, line, "Rendering.LodLightsRadius must be between 0.01 and 10");
+        return;
+    }
+    if (key == "lodlightslimit") {
+        if (!parse_u32(value, 1u, 2048u, config.rendering.lod_lights_limit))
+            warning(config, line, "Rendering.LodLightsLimit must be between 1 and 2048");
+        return;
+    }
+    if (key == "texturepack") {
+        config.rendering.texture_pack = std::string(value);
+        return;
+    }
+    if (key == "secondtexturepack") {
+        config.rendering.texture_pack2 = std::string(value);
         return;
     }
     if (key == "viewdistance" || key == "drawdistance" || key == "loddistance") {
@@ -420,8 +514,8 @@ void apply_timing_key(LcsConfiguration &config, const std::string &key,
                       const std::string &value, std::size_t line) {
     if (key == "framerate" || key == "fps" || key == "targetfps") {
         std::uint32_t frame_rate = 0u;
-        if (!parse_u32(value, 30u, 60u, frame_rate) || (frame_rate != 30u && frame_rate != 60u)) {
-            warning(config, line, "Timing.FrameRate expects 30 or 60");
+        if (!parse_u32(value, 30u, 100u, frame_rate) || (frame_rate != 30u && frame_rate < 60u)) {
+            warning(config, line, "Timing.FrameRate expects 30, or 60 to 100");
             return;
         }
         config.timing.frame_rate = frame_rate;
@@ -524,6 +618,31 @@ float view_distance_scale() noexcept {
     return std::clamp(scale, 1.0f, 4.0f);
 }
 
+namespace {
+std::atomic<bool> lod_lights_off{false};
+}
+
+void note_lod_lights_off() noexcept { lod_lights_off.store(true, std::memory_order_relaxed); }
+
+float lamp_pool_distance() noexcept { return lcs_render_configuration().rendering.lamp_pool_range; }
+
+float corona_distance_scale() noexcept {
+    static const bool enabled = [] {
+        const char *text = std::getenv("LCS_CORONA_DISTANCE");
+        return text == nullptr || *text != '0';
+    }();
+    // The distant lights take over from the game's coronas at a fixed fraction of their range, so it stays original
+    // while they draw. If they have turned themselves off, the coronas reach as far as the view distance again.
+    const bool lights_draw = lcs_render_configuration().rendering.lod_lights && !lod_lights_off.load(std::memory_order_relaxed);
+    if (!enabled || lights_draw) return 1.0f;
+    return view_distance_scale();
+}
+
+void lcs_update_configuration(const std::function<void(LcsConfiguration &)> &change) {
+    std::lock_guard<std::mutex> guard(global_configuration_mutex());
+    change(global_configuration());
+}
+
 void lcs_set_view_distance(float value) noexcept {
     if (!std::isfinite(value)) return;
     value = std::clamp(value, 1.0f, 4.0f);
@@ -542,7 +661,7 @@ void lcs_set_show_fps(bool enabled) noexcept {
 }
 
 void lcs_set_frame_rate(std::uint32_t frame_rate) noexcept {
-    frame_rate = frame_rate <= 30u ? 30u : 60u;
+    frame_rate = frame_rate <= 30u ? 30u : std::clamp(frame_rate, 60u, 100u);
     std::lock_guard<std::mutex> guard(global_configuration_mutex());
     global_configuration().timing.frame_rate = frame_rate;
 }

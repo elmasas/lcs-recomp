@@ -4,6 +4,7 @@
 #include "lcs_menu.hpp"
 
 #include <array>
+#include <cstring>
 #include <string>
 
 namespace lcs {
@@ -19,6 +20,17 @@ bool ge_finish_seen = false;
 std::uint32_t ge_finish_arg = 0u;
 
 constexpr std::uint32_t kMaxCommands = 2'000'000u;
+
+// One command word: one check and a copy, as GuestMemory::load32 does; false where the list leaves guest memory.
+inline bool read_command(const psprecomp::GuestMemory &memory, std::uint32_t pc, std::uint32_t &word) {
+    if (const std::uint8_t *raw = memory.raw_pointer(pc, 4u)) {
+        std::memcpy(&word, raw, sizeof word);
+        return true;
+    }
+    if (!memory.contains(pc, 4u)) return false;
+    word = memory.load32(pc);
+    return true;
+}
 
 std::uint32_t relative_address(std::uint32_t data24) {
     const std::uint32_t extended = ((ge_base_register & 0x000F0000u) << 8u) | (data24 & 0x00FFFFFFu);
@@ -37,8 +49,8 @@ void execute_ge_list_rendered(psprecomp::GuestMemory &memory, std::uint32_t list
     std::uint32_t pc = list_address;
 
     for (std::uint32_t executed = 0u; executed < kMaxCommands; ++executed) {
-        if (!memory.contains(pc, 4u)) break;
-        const std::uint32_t word = memory.load32(pc);
+        std::uint32_t word;
+        if (!read_command(memory, pc, word)) break;
         const std::uint32_t op_pc = pc;
         pc = (pc + 4u) & 0x0FFFFFFFu;
         const std::uint32_t command = word >> 24u;
@@ -115,8 +127,8 @@ GeListPrescan prescan_ge_list(psprecomp::GuestMemory &memory, std::uint32_t list
     std::uint32_t call_depth = 0u;
     std::uint32_t pc = list_address;
     for (std::uint32_t executed = 0u; executed < kMaxCommands; ++executed) {
-        if (!memory.contains(pc, 4u)) break;
-        const std::uint32_t word = memory.load32(pc);
+        std::uint32_t word;
+        if (!read_command(memory, pc, word)) break;
         pc = (pc + 4u) & 0x0FFFFFFFu;
         const std::uint32_t command = word >> 24u;
         const std::uint32_t data = word & 0x00FFFFFFu;
@@ -142,6 +154,58 @@ GeListPrescan prescan_ge_list(psprecomp::GuestMemory &memory, std::uint32_t list
         }
     }
     return result;
+}
+
+namespace {
+// A parsed state, applied by ge_exec_commit_state.
+struct GeExecState {
+    std::array<std::uint32_t, 256> commands{};
+    GeTransformState transform{};
+    std::uint32_t base{}, offset{}, vertex{}, index{};
+    bool finish_seen{};
+    std::uint32_t finish_arg{};
+};
+GeExecState ge_pending_state{};
+}  // namespace
+
+void ge_exec_write_state(state::Writer &out) {
+    out.u32(static_cast<std::uint32_t>(sizeof(GeTransformState)));  // raw below: a different layout can't load
+    out.pod(ge_commands);
+    out.pod(ge_transform);
+    out.u32(ge_base_register);
+    out.u32(ge_offset_address);
+    out.u32(ge_vertex_address);
+    out.u32(ge_index_address);
+    out.boolean(ge_finish_seen);
+    out.u32(ge_finish_arg);
+}
+
+bool ge_exec_parse_state(state::Reader &in) {
+    if (in.u32() != sizeof(GeTransformState)) return false;
+    GeExecState s;
+    s.commands = in.pod<std::array<std::uint32_t, 256>>();
+    s.transform = in.pod<GeTransformState>();
+    s.base = in.u32();
+    s.offset = in.u32();
+    s.vertex = in.u32();
+    s.index = in.u32();
+    s.finish_seen = in.boolean();
+    s.finish_arg = in.u32();
+    if (!in.ok()) return false;
+    ge_pending_state = s;
+    return true;
+}
+
+void ge_exec_commit_state() {
+    const GeExecState &s = ge_pending_state;
+    ge_commands = s.commands;
+    ge_transform = s.transform;
+    ge_base_register = s.base;
+    ge_offset_address = s.offset;
+    ge_vertex_address = s.vertex;
+    ge_index_address = s.index;
+    ge_finish_seen = s.finish_seen;
+    ge_finish_arg = s.finish_arg;
 }
 
 bool rendered_list_finished() { return ge_finish_seen; }

@@ -6317,6 +6317,9 @@ L_088F27D8:
     ctx.set_fpu_condition((ctx.fpr[13] < ctx.fpr[14]));
     // nop
     { const bool branch_taken = !ctx.fpu_condition();
+    // How far the follow camera swings toward where the player walks. Not while free-aiming: strafing walks sideways,
+    // and only the mouse turns the aim.
+    if (lcs::lcs_free_aim_active()) ctx.fpr[12] = 0.0f;
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(1092), std::bit_cast<std::uint32_t>(ctx.fpr[12]));
       if (branch_taken) {
           goto L_088F2800;
@@ -6529,6 +6532,10 @@ L_088F299C:
     ctx.fpr[12] = std::bit_cast<float>(ctx.gpr[4]);
     { const float fs = ctx.fpr[12]; const float ft = ctx.fpr[26]; if ((std::isinf(fs) && ft == 0.0f) || (std::isinf(ft) && fs == 0.0f)) ctx.fpr[26] = std::bit_cast<float>(0x7FC00000u); else ctx.fpr[26] = fs * ft; }
     ctx.fpr[12] = ctx.fpr[16] - ctx.fpr[24];
+    // The follow camera pulls its pitch toward a pitch it works out from where the player is. While free-aiming, and
+    // moving and firing at once, that pull ran to the 85 degree limit and the camera ended up looking at the ground. Only
+    // the mouse turns the aim: no pull (the pitch counterpart of the swing zeroed below for the yaw).
+    if (lcs::lcs_free_aim_active()) ctx.fpr[12] = 0.0f;
     { const float fs = ctx.fpr[30]; const float ft = ctx.fpr[12]; if ((std::isinf(fs) && ft == 0.0f) || (std::isinf(ft) && fs == 0.0f)) ctx.fpr[12] = std::bit_cast<float>(0x7FC00000u); else ctx.fpr[12] = fs * ft; }
     ctx.set_fpu_condition((ctx.fpr[26] < ctx.fpr[12]));
     // nop

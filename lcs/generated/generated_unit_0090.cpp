@@ -1,5 +1,6 @@
 #include "psprecomp/runtime.hpp"
 #include "generated_units.hpp"
+#include "lcs_gps.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -1256,6 +1257,8 @@ L_0896C1BC:
     ctx.pc = jump_target;
     return;
 L_0896C1F4:
+    // CRadar::DrawBlips: the GPS line goes under the blips.
+    lcs::gps_draw(rt, ctx);
     ctx.gpr[29] = (ctx.gpr[29] + static_cast<std::uint32_t>(-208));
     aot_mem.aot_store32(ctx.gpr[29] + static_cast<std::uint32_t>(168), ctx.gpr[18]);
     ctx.gpr[18] = (2232u << 16u);

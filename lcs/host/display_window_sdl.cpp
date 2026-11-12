@@ -8,6 +8,7 @@
 #include "lcs_mouse.hpp"
 #include "lcs_display_menu.hpp"
 #include "lcs_key_bindings.hpp"
+#include "lcs_state.hpp"
 #include "lcs_render_config.hpp"
 #include "host_font_5x7.hpp"
 
@@ -160,6 +161,12 @@ void pump_events() noexcept {
                 host_settings_handle(HostSettingsKey::Close);
                 discard_pending_pointer();
             }
+        } else if (event.type == SDL_KEYDOWN && event.key.repeat == 0 &&
+                   (event.key.keysym.scancode == SDL_SCANCODE_F5 || event.key.keysym.scancode == SDL_SCANCODE_F6 ||
+                    event.key.keysym.scancode == SDL_SCANCODE_F7)) {
+            if (event.key.keysym.scancode == SDL_SCANCODE_F5) lcs_state_hotkey_save();
+            else if (event.key.keysym.scancode == SDL_SCANCODE_F6) lcs_state_hotkey_next_slot();
+            else lcs_state_hotkey_load();
         } else if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_F11 &&
                  event.key.repeat == 0)
             toggle_fullscreen();
@@ -472,6 +479,8 @@ bool display_window_profile_key_pressed() {
     return pressed;
 }
 
+void display_window_request_close() {}
+
 bool display_window_closed() { return g_closed; }
 
 void display_window_request_fullscreen(bool enabled) noexcept {
@@ -560,6 +569,8 @@ HostInputState display_window_input() {
     HostInputState input{};
     const auto publish = [&]() -> HostInputState {
         lcs_camera_set_axes(input.camera_x, input.camera_y);
+        // While free-aiming: no sprint and no weapon switch (on foot, Cross and the d-pad's left and right).
+        if (lcs_free_aim_active()) input.buttons &= ~(kPspCross | kPspLeft | kPspRight);
         lcs_set_host_drive_inputs(input.accelerate, input.brake);
         cached = input;
         return cached;
@@ -596,7 +607,9 @@ HostInputState display_window_input() {
             default: return false;
             }
         };
-        const KeyboardSample keys = sample_keyboard(controls.bindings, driving, is_down);
+        static MenuKeyFilter menu_keys;
+        const bool gameplay = lcs_camera_in_use() || !lcs_camera_hook_enabled();
+        const KeyboardSample keys = menu_keys.sample(controls.bindings, driving, menu, gameplay, is_down);
         input.buttons |= keys.buttons;
         input.accelerate = keys.accelerate;
         input.brake = keys.brake;

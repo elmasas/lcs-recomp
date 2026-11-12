@@ -10,11 +10,13 @@ Place your decrypted `EBOOT.ELF` and the disc's `PSP_GAME` folder in `game/` for
 
 ## Build
 
-Requires Visual Studio 2022 and LLVM (clang-cl).
+Requires Visual Studio 2022 or its Build Tools, with clang-cl from LLVM or from Visual Studio's "C++ Clang tools" component.
 
 ```text
 lcs\BUILD_LCS.bat
 ```
+
+`lcs\scripts\build_perf.bat` makes the optimised build (ThinLTO and AVX2) in `out\lcs-perf`, and `lcs\scripts\play_perf.bat` runs it.
 
 ## Play
 
@@ -22,7 +24,7 @@ lcs\BUILD_LCS.bat
 lcs\PLAY_LCS.bat
 ```
 
-Settings are in `lcs/config/LCSNative.ini`.
+Settings are in `lcs/config/LCSNative.ini`. To keep your own apart from the defaults, copy it to `lcs/game/LCSNative.ini`: `play.bat` uses that one when it exists, and git ignores that folder.
 
 `Display.ResolutionMode` is the window (`PSP`, `Scale`, `Custom`, or
 `Desktop`). `Rendering.InternalResolutionMode` is the GE render
@@ -30,7 +32,107 @@ target, with the same four choices. `Desktop` uses the monitor on
 Windows and on Linux. `Rendering.TextureLodBias` shifts texture mip
 selection; negative values keep textures sharper at a distance.
 
+## Main menu
+
+On Windows the game opens on a main menu: Continue, Load Game, Load State (see Save states), New Game, Options and Quit Game. Continue loads your newest save. Everything it shows and plays comes from your own game files at runtime, and nothing from the game is included here. To go straight to the game instead, turn off F10, Display, Show the main menu.
+
+**Music** is the game's opening theme. F10, Display, Music also has the finale, the ending, or off. It follows the master volume.
+
+**Paintings** are chosen at random from the game's loading screens, or from your texture pack if it has them. You can also add your own PNG pictures to `game/MENUART/`; random prefers them. F10, Display, Painting picks a fixed one.
+
+To use your own images, put PNG files in `lcs/game/MENUART/`, or `game/MENUART/` in a release. Random then uses only those, among the ones that suit your window's shape, and the file name is how an image appears in the list. The [high-resolution LCS artworks](https://gtaforums.com/topic/992240-lcs-high-resolution-gta-lcs-artworks/) on GTAForums look very good here.
+
+## Saves
+
+The game has 8 save slots. Walk onto the save disc at a safehouse to choose one. The game's own Load and Delete, in the pause menu's Game page, use the same list. Saves are in `lcs/game/PSP/SAVEDATA/`, in the game's own format, with a `SLOTINFO.TXT` beside each one for the list to show. On Linux the list isn't drawn yet, and the game uses a single slot.
+
+## Save states
+
+Like an emulator's save states, and apart from the game's own saves: F5 saves the whole game at once, F6 picks the next of 5 slots, F7 loads the chosen slot. A short message shows in the corner. States are files in `lcs/game/STATES/`, or `game/STATES/` in a release, and each is about 30 MB because it holds the game's memory, so share none and publish none. The main menu has a Load State item, shown when a state exists, that loads the newest one: if the game crashes, start it and choose that. A state works across restarts, but not across a new version of the game that changes what a state holds (it says so instead of loading). F5 and F7 don't work during a movie, in the main menu or while a menu is open.
+
+The game can also save a state on its own every few minutes of play, into Auto 1 to 3, replacing the oldest, so a crash costs at most a few minutes; the game pauses for about a frame while it does. It's off unless you turn it on: F10, Game, Save states, Automatic state (or `AutoStateMinutes=` under `[Display]`, from 1 to 60). The pause menu's States page lists every slot with when it was saved: pick one to load it, or to save into one of your own five. The game's own saving is untouched, and still the safer record of your progress.
+
+## Weapon wheel, radio wheel and GPS
+
+**Weapon wheel:** on foot, hold Tab, or press the right stick's button, then point at a weapon with the mouse or the right stick and let go. The mouse wheel, Q and E change weapon one at a time. Each weapon shows its HUD icon in its colour, with its ammo: from your texture pack when it has the icons, or else as the game draws them, kept the first time each weapon is on the HUD (until then, its name). Not while aiming.
+
+**Radio wheel:** in a vehicle, hold Q, or press the right stick's button, then point at a station with the mouse or the right stick and let go. A quick press of Q goes back a station, and E goes forward, as before. The keys follow GTA V on PC, and both wheels can be rebound under Controls. Logos come from your texture pack when it has them. Otherwise each station's name shows until you've tuned to it once, and the game's own logo is kept from then on. The idea comes from VoidRadioWheel for San Andreas; none of its code or art is used.
+
+**GPS:** in a vehicle, a line on the radar follows the roads to your marker or the mission's objective. It doesn't know one-way streets or which bridges the story has opened yet. Turn it off or change its width under Game, in F10 or Options. The idea comes from [GPS Redux](https://github.com/juicermv/GTA-GPS-Redux) for San Andreas; none of its code is used.
+
+## In-game menu
+
+## Pause menu
+
+Esc opens one row of pages: Map, Brief, Stats, Game, Audio, Settings and Quit. A/D or Q/E move along the row, Enter goes into a page, and Esc comes back out, then closes the menu. Map, Brief, Stats, Game and Audio are the game's own pages, so the map, loading and stats work as they always have. Settings is the same screen as Options on the main menu, and its Game page also opens the game's own display, controls and language pages. To get the game's original pause menu back, turn on Settings, Game, Use the classic pause menu.
+
+F10 opens the settings and the trainer on Windows. Settings are saved to `LCSNative.ini`. The trainer's switches are never saved: every start goes back to the original game. What the game itself keeps in a save is another matter: its own cheats (weapons, money, health, armor, wanted level, weather, button cheats, spawning a car) count as cheating in its stats, as when typed in, and a save made with god mode on keeps its very high health and armor, so turn god mode off before saving. God mode, teleports, the clock, game speed and coordinates aren't cheats to the game.
+
+| Page | What's there |
+| --- | --- |
+| Display, Graphics, Controls, Game | Window, resolution, view distance, frame rate, distant street lights, texture pack |
+| Player | God mode, the game's own cheats (weapons, money, health, armor, wanted level) and button cheats, spawn a car |
+| Teleport | Map marker, the mission's objective, the nearest road, a saved position |
+| World | Hold the time of day, game speed, weather, coordinates on screen |
+
+The trainer only uses the game itself: its own cheat routines and button codes, and fields of the player, the clock and the radar. A spawned car comes from the game's own vehicle cheat (the one behind its Rhino cheat), on the nearest road. Getting into it in front of the police can give you a wanted star.
+
+## Texture packs
+
+PPSSPP texture packs work. None is included: packs are made from the game's own art, so, like the game, you get them yourself, from their authors.
+
+Unpack one into `lcs/game/TEXTURES/`, or `game/TEXTURES/` in a release, so that its `textures.ini` is inside, at any depth up to four folders. Then choose it under F10, Graphics, Texture pack. It applies at once. A second pack fills in what the first doesn't replace: F10, Graphics, Second texture pack.
+
+Tested together, both made for the European version (ULES00151):
+
+| Pack | Authors | Choose it as |
+| --- | --- | --- |
+| [GTA LCS HD+ Interface v2.1](https://libertycity.net/files/gta-liberty-city-stories/244100-gta-lcs-hd-interface-v2-1.html) | SonofUgly, Sorux, MisaelVieira93, djdarko, Flentric | Texture pack: the HUD, menus and text. It comes in 128 and 256 sizes; 256 suits PC resolutions. |
+| [GTA LCS Ultimate HD Project v2.3](https://es.libertycity.net/files/gta-liberty-city-stories/193958-gta-liberty-city-stories-ultimate-hd-project-for-ppsspp.html) | MisaelVieira93, Sorux, djdarko | Second texture pack: the world, vehicles, effects. |
+
+Their large images (4096 by 4096) are put on the graphics card while the game starts, so that the first time one shows doesn't stall a frame. Together the two packs, with their mipmaps, use about 1.4 GB of memory and roughly 1 GB more of video memory.
+
+A pack made for another region may match only partly: a texture it doesn't match stays as it is.
+
+Each pack image also gets smaller copies (mipmaps), made when the pack loads, so distant roads and walls don't shimmer.
+
+For pack makers, what this reads from a pack's `textures.ini` ([format](https://github.com/hrydgard/ppsspp/wiki/Texture-replacement-ini-syntax)):
+
+- `[options]`: `hash` (`xxh64`, `xxh32` or `quick`) and `ignoreAddress`.
+- `[hashes]`: entries with the full 24-digit key; folders in file names with `/` or `\`.
+- PNG images.
+
+Not read yet: entries tied to a memory address (keys not starting with `00000000` when `ignoreAddress` is off), mipmap entries (`..._1 = ...`), `[hashranges]`, `[filtering]`, `[reducehashranges]`, and DDS or KTX2 images.
+
+`Rendering.TextureCacheEntries` and `Rendering.TextureCacheMB` set the size of the texture cache. Packs with large images, or long sessions, can use more than the defaults of 8192 and 256; if you have the memory to spare, 16384 and 512 avoid reloading textures.
+
+## Distant lights
+
+Street lamps and traffic lights stay lit far into the distance at night, drawn as coronas past where the game's own end, from the lamp positions in Project2DFX (see `lcs/CREDITS.md`). Lamps also light the ground further, and past that, faint patches of their colour stand in for the pools of light. Settings under `[Rendering]` in `LCSNative.ini`:
+
+| Setting | Values | Default | What it does |
+| --- | --- | --- | --- |
+| `LodLights` | `true`/`false` | `true` | The distant lights. |
+| `LodLightsRange` | 100 to 4000 | 500 | How far they reach. |
+| `LodLightsRadius` | 0.01 to 10 | 1.0 | Their size. |
+| `LodLightsLimit` | 1 to 2048 | 900 | How many draw at once, nearest first. |
+| `LampPoolRange` | 10 to 1000 | 120 | How far a lamp's pool of light on the ground shows (the game's is 40). |
+| `LampPatches` | `true`/`false` | `true` | The patches past the pools. |
+| `LampPatchRange` | 100 to 2000 | 450 | How far the patches reach. |
+
+With `LodLights` off, the game's own coronas reach as far as `Rendering.ViewDistance` instead; `LCS_CORONA_DISTANCE=0` keeps them at the game's distances.
+
 ## Mouse and keyboard
+
+In the game's own menus, and on the title screen, these keys always work, whatever the bindings below say:
+
+| Key | In a menu |
+| --- | --- |
+| W, A, S, D or the arrow keys | Move |
+| Enter | Accept. Also skips the title movie and cutscenes. |
+| Escape or Backspace | Go back. Escape also closes the pause menu. |
+
+The rest of this section is about gameplay.
 
 Edit `[Controls]` in `lcs/config/LCSNative.ini`, then restart. A
 binding is one or more names separated by commas. `None` clears it.
@@ -55,10 +157,11 @@ takes the same action names.
 | `WeaponPrevious` | Q, Left, wheel up | Previous weapon. In a vehicle, previous radio station. |
 | `WeaponNext` | E, Right, wheel down | Next weapon. In a vehicle, next radio station. |
 | `Up` | Up | Toggle a special mission. In a vehicle, also pitches up. |
-| `Down` | Down | D-pad down. In a vehicle, horn and pitch down. |
+| `Down` | Down | D-pad down. In a vehicle, pitch down (a wheelie on a bike). |
 | `Pause` | Escape | Pause. |
 | `Camera` | V | Change camera. |
 | `Handbrake` | Space | Handbrake in a vehicle. |
+| `Horn` | G | Horn in a vehicle. |
 
 Controller names follow the Xbox layout. On a PlayStation pad, A is
 Cross, B is Circle, X is Square, and Y is Triangle. `LeftStick` and
@@ -129,7 +232,7 @@ That way you will get a pre-confugred build environment which also utilzes [ccac
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md).
+MIT, see [`LICENSE`](LICENSE). Third-party notices: [`lcs/THIRD_PARTY.md`](lcs/THIRD_PARTY.md). Projects whose ideas this one follows are credited in [`lcs/CREDITS.md`](lcs/CREDITS.md).
 
 ## Unattended engine stress test
 

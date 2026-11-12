@@ -16,6 +16,11 @@ namespace lcs {
 void prompt_texture_apply(std::uint64_t signature, std::uint32_t width, std::uint32_t height,
                           std::uint32_t mip_levels, std::span<std::byte> rgba8);
 
+// The next smaller mip level of an RGBA8 image: each pixel the average of a 2x2 block, clamped at odd edges.
+// `target` holds max(1, width / 2) x max(1, height / 2) pixels.
+void mip_level_down(const std::byte *source, std::uint32_t source_width, std::uint32_t source_height,
+                    std::byte *target) noexcept;
+
 // Writes the first seen picture of every texture to the dump folder so the
 // button prompt atlas can be identified offline. `screen_space` marks draws
 // that use through (2D) vertices, which is where the HUD lives.

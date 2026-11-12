@@ -78,6 +78,9 @@ enum class BindAction : std::uint8_t {
     Pause,
     Camera,
     Handbrake,
+    Horn,
+    RadioWheel,
+    WeaponWheel,
     Count,
 };
 
@@ -159,6 +162,9 @@ inline const char *bind_action_name(BindAction action) noexcept {
     case BindAction::Pause: return "Pause";
     case BindAction::Camera: return "Camera";
     case BindAction::Handbrake: return "Handbrake";
+    case BindAction::Horn: return "Horn";
+    case BindAction::RadioWheel: return "RadioWheel";
+    case BindAction::WeaponWheel: return "WeaponWheel";
     case BindAction::Count: return "";
     }
     return "";
@@ -175,10 +181,12 @@ inline std::uint32_t action_buttons(BindAction action, bool driving) noexcept {
     case BindAction::WeaponPrevious: return kPspLeft;
     case BindAction::WeaponNext: return kPspRight;
     case BindAction::Up: return kPspUp;
-    case BindAction::Down: return kPspDown;
+    // D-pad down is the horn in a vehicle. The Down key only pitches there (a wheelie on a bike), and Horn sounds it.
+    case BindAction::Down: return driving ? 0u : kPspDown;
     case BindAction::Pause: return kPspStart;
     case BindAction::Camera: return kPspSelect;
     case BindAction::Handbrake: return driving ? kPspRTrigger : 0u;
+    case BindAction::Horn: return driving ? kPspDown : 0u;
     default: return 0u;
     }
 }
@@ -210,6 +218,10 @@ inline ControlBindings default_control_bindings() {
     add(BindAction::Pause, {HostKey::Escape});
     add(BindAction::Camera, {HostKey::V});
     add(BindAction::Handbrake, {HostKey::Space});
+    add(BindAction::Horn, {HostKey::G});
+    // As in GTA V on PC: hold Q in a vehicle for the radio, hold Tab on foot for weapons.
+    add(BindAction::RadioWheel, {HostKey::Q});
+    add(BindAction::WeaponWheel, {HostKey::Tab});
     const auto add_pad = [&](PadButton button, std::initializer_list<BindAction> actions) {
         auto &count = bindings.pad_count[static_cast<std::size_t>(button)];
         for (const BindAction action : actions) {
@@ -232,6 +244,7 @@ inline ControlBindings default_control_bindings() {
     add_pad(PadButton::DpadLeft, {BindAction::WeaponPrevious});
     add_pad(PadButton::DpadRight, {BindAction::WeaponNext});
     add_pad(PadButton::LeftClick, {BindAction::Down});
+    add_pad(PadButton::RightClick, {BindAction::RadioWheel, BindAction::WeaponWheel});  // one button, as GTA V's LB
     return bindings;
 }
 
@@ -268,6 +281,53 @@ KeyboardSample sample_keyboard(const ControlBindings &bindings, bool driving, Is
     }
     return sample;
 }
+
+// The game's own menus, whatever the bindings say: WASD or the arrows move, Enter accepts, Escape or Backspace goes back. The menu
+// has its own keys so that it can't be left unusable by a rebinding, and they don't reach it as their gameplay actions.
+// A key held while a menu opens or closes does nothing until it's released: Escape opens the pause menu, and would
+// otherwise go on to close it. Outside gameplay but with no menu open, as on the screen the game waits on at startup
+// and in cutscenes, Enter still accepts.
+class MenuKeyFilter {
+public:
+    template <class IsDown>
+    KeyboardSample sample(const ControlBindings &bindings, bool driving, bool menu, bool gameplay, IsDown &&is_down) {
+        const bool outside = menu || !gameplay;
+        if (menu != was_menu_ || outside != was_outside_) {
+            for (const HostKey key : kKeys) latched_[static_cast<std::size_t>(key)] = is_down(key);
+            was_menu_ = menu;
+            was_outside_ = outside;
+        }
+        for (const HostKey key : kKeys) {
+            if (!is_down(key)) latched_[static_cast<std::size_t>(key)] = false;
+        }
+        const auto usable = [&](HostKey key) { return is_down(key) && !latched_[static_cast<std::size_t>(key)]; };
+        KeyboardSample sample = sample_keyboard(bindings, driving, [&](HostKey key) {
+            if (!is_filtered(key)) return is_down(key);
+            if (menu || (outside && key == HostKey::Enter)) return false;
+            return usable(key);
+        });
+        if (outside && usable(HostKey::Enter)) sample.buttons |= kPspCross;
+        if (menu) {
+            if (usable(HostKey::W) || usable(HostKey::Up)) sample.buttons |= kPspUp;
+            if (usable(HostKey::S) || usable(HostKey::Down)) sample.buttons |= kPspDown;
+            if (usable(HostKey::A) || usable(HostKey::Left)) sample.buttons |= kPspLeft;
+            if (usable(HostKey::D) || usable(HostKey::Right)) sample.buttons |= kPspRight;
+            if (usable(HostKey::Escape) || usable(HostKey::Backspace)) sample.buttons |= kPspCircle;
+        }
+        return sample;
+    }
+
+private:
+    static constexpr std::array<HostKey, 12> kKeys = {HostKey::W, HostKey::A, HostKey::S, HostKey::D, HostKey::Up,
+                                                      HostKey::Down, HostKey::Left, HostKey::Right, HostKey::Enter,
+                                                      HostKey::Escape, HostKey::Backspace, HostKey::MouseLeft};
+    static bool is_filtered(HostKey key) noexcept {
+        return std::find(kKeys.begin(), kKeys.end(), key) != kKeys.end();
+    }
+    std::array<bool, 256> latched_{};
+    bool was_menu_{false};
+    bool was_outside_{false};
+};
 
 inline std::uint32_t binding_wheel_buttons(const ControlBindings &bindings, bool up,
                                            bool driving) noexcept {
@@ -332,6 +392,9 @@ inline bool lookup_bind_action(std::string_view name, BindAction &action) noexce
         {"select", BindAction::Camera},
         {"changecamera", BindAction::Camera},
         {"handbrake", BindAction::Handbrake},
+        {"horn", BindAction::Horn},
+        {"radiowheel", BindAction::RadioWheel},
+        {"weaponwheel", BindAction::WeaponWheel},
     };
     for (const Alias &alias : kAliases) {
         if (name == alias.name) {
@@ -573,6 +636,7 @@ inline bool pad_button_is_trigger(PadButton button) noexcept {
 
 inline std::uint32_t pad_action_buttons(BindAction action) noexcept {
     if (action == BindAction::Handbrake) return kPspRTrigger;
+    if (action == BindAction::Horn) return kPspDown;
     return action_buttons(action, false);
 }
 
