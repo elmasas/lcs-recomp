@@ -24,6 +24,7 @@
 #include "lcs_perf_log.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_stress_test.hpp"
+#include "lcs_trainer.hpp"
 #include "lcs_world_detail.hpp"
 
 #include "psprecomp/common.hpp"
@@ -3397,7 +3398,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 ? stress_test_input(rt, {}) : display_window_input();
             std::uint8_t analog_x = host.analog_x;
             std::uint8_t analog_y = host.analog_y;
-            std::uint32_t buttons = frontend_boot_pad(host.buttons);
+            std::uint32_t buttons = frontend_boot_pad(trainer_pad_buttons(host.buttons, analog_x, analog_y));
             buttons = pause_menu_game_tick(rt, buttons);
             if (perf::g_enabled) note_player_for_metrics(rt);
             // What picks a save isn't for the game, up to when it's released: Esc on the list would go on to close the menu.

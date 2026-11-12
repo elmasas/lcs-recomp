@@ -44,3 +44,9 @@ over the shoulder that only the mouse turns.
 Save states (`lcs/host/lcs_profile_state.inc`, `lcs_state.hpp`, `lcs_state_io.hpp`) follow the idea of an emulator's save
 states, as in PPSSPP, with the F5/F7 keys many emulators use. No code is taken from any emulator: the format and what it
 saves are this project's own.
+
+Ideas only, no code: the GPS line (`lcs/host/lcs_gps.cpp`) follows GPS Redux for San Andreas
+(`juicermv/GTA-GPS-Redux`). It is written new for this game: it searches the game's own road nodes and draws through
+its own radar functions.
+
+The trainer's cheats are the game's own: the routines its cheat-code check calls, and its button codes.

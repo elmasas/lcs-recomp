@@ -1,4 +1,5 @@
 #include "lcs_frontend_menu.hpp"
+#include "lcs_gps.hpp"
 #include "lcs_texture_pack.hpp"
 #include "lcs_texture_probe.hpp"
 #include "ge_renderer.hpp"
@@ -4703,6 +4704,22 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
             if (!decode_vertex_optimized(memory, vertex_address + index * layout.stride, layout,
                                          commands, transform, vertex, error)) return false;
             vertices.push_back(vertex);
+        }
+    }
+
+    // The GPS line's shapes get back the exact corners the game's 2D drawing rounded off.
+    if (layout.through && layout.position_type == 2u && vertices.size() == 4u && !setup.texture_enabled) {
+        float xs[4], ys[4];
+        for (int i = 0; i < 4; ++i) {
+            xs[i] = vertices[i].x;
+            ys[i] = vertices[i].y;
+        }
+        const Color &c = vertices.front().color;
+        if (lcs::gps_refine_quad(xs, ys, c.r, c.g, c.b)) {
+            for (int i = 0; i < 4; ++i) {
+                vertices[i].x = xs[i];
+                vertices[i].y = ys[i];
+            }
         }
     }
 

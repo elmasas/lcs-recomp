@@ -61,7 +61,9 @@ struct DisplayConfiguration {
     // Minutes between automatic save states (lcs_state.hpp); 0 turns them off.
     std::uint32_t auto_state_minutes{0u};  // off unless the player turns it on
     std::string menu_music{"intro"};
+    bool gps{true};
     bool classic_pause{false};
+    std::uint32_t gps_width{2u};
     // Pictures shown by the game's button prompts: "original" or a folder name
     // under <config dir>/textures.
     std::string prompt_style{"original"};
