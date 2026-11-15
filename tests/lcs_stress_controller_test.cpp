@@ -56,6 +56,134 @@ int main() {
         driver.sample(0, o);
         check(driver.sample(10.1, o).buttons & lcs::kPspTriangle, "vehicle seeking missing");
         check(!(driver.sample(10.5, o).buttons & lcs::kPspTriangle), "vehicle button did not release");
+        lcs::StressController indoors(true);
+        lcs::StressObservation house;
+        house.ready = true;
+        house.position = {1138.8f, -242.405f, 23.05f};
+        house.camera = {0.0f, 1.0f};
+        house.facing = {0.0f, 1.0f};
+        const auto door = indoors.sample(3.0, house);
+        check(!(door.analog_y == 0 && door.analog_x == 128),
+              "safehouse start must not walk blind forward");
+        check(door.analog_x == 255 && door.analog_y == 128 && !(door.buttons & lcs::kPspTriangle),
+              "safehouse start should turn toward the doorway");
+        house.position = {1142.8f, -242.4f, 23.05f};
+        const auto along = indoors.sample(3.2, house);
+        check(along.analog_x == 128 && along.analog_y == 255,
+              "the next safehouse waypoint is behind a north-facing camera");
+        house.position = {1142.8f, -246.0f, 23.05f};
+        indoors.sample(3.4, house);
+        house.position = {1151.92f, -262.9f, 17.3f};
+        const auto to_yard = indoors.sample(3.6, house);
+        check(to_yard.analog_y > 160 && to_yard.analog_x > 200 && !(to_yard.buttons & lcs::kPspCross),
+              "after the door he should continue to the yard, not back inside");
+        house.position = {0.0f, 0.0f, 5.0f};
+        const auto outside = indoors.sample(4.0, house);
+        check(outside.analog_y == 0 && (outside.buttons & lcs::kPspCross),
+              "outside the safehouse the controller runs");
+        lcs::StressController seeker(true);
+        lcs::StressObservation street;
+        street.ready = true;
+        street.position = {0.0f, 0.0f, 0.0f};
+        street.camera = {0.0f, 1.0f};
+        street.vehicle_near = true;
+        street.vehicle = {0.0f, 10.0f, 0.0f};
+        const auto toward = seeker.sample(3.0, street);
+        check(toward.analog_y == 0 && (toward.buttons & lcs::kPspCross) &&
+              !(toward.buttons & lcs::kPspTriangle),
+              "a distant vehicle should be approached on foot");
+        street.vehicle = {0.0f, 1.5f, 0.0f};
+        check(seeker.sample(3.1, street).buttons & lcs::kPspTriangle,
+              "enter when alongside a vehicle");
+        check(!(seeker.sample(3.4, street).buttons & lcs::kPspTriangle),
+              "the enter press must release");
+        lcs::StressController beside(true);
+        lcs::StressObservation garage_bike;
+        garage_bike.ready = true;
+        garage_bike.position = {1156.0f, -266.6f, 17.0f};
+        garage_bike.camera = {0.0f, 1.0f};
+        garage_bike.bike_near = true;
+        garage_bike.bike = {1156.0f, -270.0f, 17.0f};
+        const auto mount = beside.sample(3.1, garage_bike);
+        check(mount.analog_x == 128 && mount.analog_y == 128 && (mount.buttons & lcs::kPspTriangle),
+              "stand in front of the garage bike and enter");
+        garage_bike.position = {1156.0f, -268.0f, 17.0f};
+        const auto mounting = beside.sample(3.4, garage_bike);
+        check(mounting.analog_x == 128 && mounting.analog_y == 128 &&
+              (mounting.buttons & lcs::kPspTriangle),
+              "keep entering after the animation steps toward the bike");
+        lcs::StressController yard(true);
+        lcs::StressObservation opening;
+        opening.ready = true;
+        opening.position = {1149.8f, -256.7f, 17.3f};
+        opening.camera = {0.0f, 1.0f};
+        opening.bike_near = true;
+        opening.bike = {1149.0f, -250.0f, 17.0f};
+        const auto stay = yard.sample(3.0, opening);
+        check(!(stay.analog_y == 0 && (stay.buttons & lcs::kPspCross)),
+              "near the safehouse he should not sprint off toward street traffic");
+        lcs::StressController garage(true);
+        lcs::StressObservation stall;
+        stall.ready = true;
+        stall.driving = true;
+        stall.entity = 1;
+        stall.position = {1155.0f, -270.0f, 17.0f};
+        garage.sample(1.0, stall);
+        const auto backing = garage.sample(2.0, stall);
+        check(backing.brake && !backing.accelerate && backing.analog_y == 255 && backing.analog_x == 128,
+              "a bike nosed into the garage wall should reverse out");
+        lcs::StressController leave(true);
+        lcs::StressObservation cleared;
+        cleared.ready = true;
+        cleared.driving = true;
+        cleared.entity = 2;
+        cleared.position = {1155.0f, -250.0f, 17.0f};
+        cleared.facing = {0.0f, -1.0f};
+        leave.sample(1.0, cleared);
+        cleared.position = {1155.0f, -260.0f, 17.0f};
+        const auto turned = leave.sample(2.0, cleared);
+        check(turned.accelerate && turned.brake && turned.analog_x == 255 && turned.analog_y == 128,
+              "after leaving the stall he should turn out instead of reversing into the wall");
+        cleared.position = {1158.f, -220.f, 17.f};
+        cleared.facing = {0.f, 1.f};
+        leave.sample(3.0, cleared);
+        cleared.position = {1127.f, -250.f, 17.f};
+        cleared.facing = {0.f, -1.f};
+        const auto west_street = leave.sample(4.0, cleared);
+        check(!(west_street.accelerate && west_street.brake && west_street.analog_x == 255),
+              "the garage burnout must not resume on the west side of the block");
+        lcs::StressController circuit(true);
+        lcs::StressObservation bike;
+        bike.ready = true;
+        bike.driving = true;
+        bike.entity = 9;
+        bike.position = {1155.f, -250.f, 17.f};
+        bike.facing = {0.f, -1.f};
+        circuit.sample(1.0, bike);
+        bike.position = {1156.f, -245.f, 17.f};
+        bike.facing = {0.f, 1.f};
+        const auto to_corner = circuit.sample(2.0, bike);
+        check(to_corner.analog_x > 160 && to_corner.throttle > 0 && !to_corner.accelerate && !to_corner.brake,
+              "once clear of the garage he should ride toward the first block corner");
+        bike.position = {1158.f, -239.f, 17.f};
+        const auto second = circuit.sample(3.0, bike);
+        check(second.analog_x > 110 && second.analog_x < 146 && second.throttle > 0 && !second.accelerate,
+              "reaching a block corner should aim him at the next one");
+        const std::array<std::array<float, 2>, 14> corners{{
+            {{1158.f, -239.f}}, {{1158.f, -217.f}}, {{1127.f, -212.f}}, {{1127.f, -240.f}},
+            {{1127.f, -276.f}}, {{1146.f, -284.f}}, {{1187.f, -284.f}}, {{1198.f, -265.f}},
+            {{1198.f, -217.f}}, {{1184.f, -207.f}}, {{1163.f, -211.f}}, {{1161.f, -223.f}},
+            {{1160.f, -235.f}}, {{1157.f, -261.f}},
+        }};
+        for (unsigned i = 0; i < corners.size(); ++i) {
+            bike.position = {corners[i][0], corners[i][1], 17.f};
+            circuit.sample(4.0 + i, bike);
+        }
+        bike.position = {1158.f, -228.f, 17.f};
+        bike.facing = {0.f, 1.f};
+        const auto again = circuit.sample(20.0, bike);
+        check(again.analog_x > 200 && !again.accelerate && !again.brake,
+              "after one circuit he should turn back to the first block corner");
         lcs::StressController stuck;
         o.entity = 123; o.driving = false;
         for (int i = 0; i <= 60; ++i) stuck.sample(i, o);

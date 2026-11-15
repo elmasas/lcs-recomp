@@ -106,6 +106,17 @@ private:
     double recovery_at_{-100.0};
     double distance_{};
     double stalled_seconds_{};
+    unsigned exit_step_{};
+    bool exit_done_{};
+    double enter_until_{-1.0};
+    double enter_hold_until_{-1.0};
+    bool stall_cleared_{};
+    bool yard_left_{};
+    unsigned block_step_{};
+    int block_turn_{};
+    float block_speed_{};
+    double block_speed_at_{-1.0};
+    std::array<float, 3> block_speed_pos_{};
     unsigned recoveries_{};
     unsigned moving_samples_{};
     unsigned driving_samples_{};
