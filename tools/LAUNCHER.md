@@ -10,8 +10,9 @@ the game and settings live).
 2. Process ISO — extracts `PSP_GAME` into `lcs\game`, decrypts
    `SYSDIR\EBOOT.BIN` to `lcs\game\EBOOT.ELF`, reads `PARAM.SFO` and shows
    Disc ID, title and region. Progress and a log appear in the window.
-3. Launch game — starts the built `LCSNative.exe` with the game folder and
-   `lcs\config\LCSNative.ini`. Open game folder opens that directory in
+3. Launch game — starts the newest built `LCSNative.exe` (`out\lcs-perf`, `out\lcs-clang`, ...) with the
+   game folder and `lcs\game\LCSNative.ini` when it exists, otherwise `lcs\config\LCSNative.ini`. The Controls
+   tab saves to that same file. Open game folder opens that directory in
    Explorer.
 
 **Controls tab**

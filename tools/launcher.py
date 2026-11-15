@@ -29,7 +29,10 @@ def _base_dir() -> Path:
 # working directory the launcher was started from.
 REPO_ROOT = _base_dir()
 GAME_DIR = REPO_ROOT / "lcs" / "game"
-INI_PATH = REPO_ROOT / "lcs" / "config" / "LCSNative.ini"
+# A player's own settings in lcs/game/LCSNative.ini (git ignores that folder) win over the shipped defaults, as in
+# play.bat.
+_OWN_INI = GAME_DIR / "LCSNative.ini"
+INI_PATH = _OWN_INI if _OWN_INI.exists() else REPO_ROOT / "lcs" / "config" / "LCSNative.ini"
 PSPDECRYPT = "pspdecrypt.exe"
 SEVENZIP = "7z"
 PRIMARY_DISC_ID = "ULUS10041"
@@ -196,17 +199,15 @@ def process_iso(iso_path: Path, game_dir: Path | None = None, report=None) -> di
 
 
 def find_game_exe() -> Path | None:
-    """Built LCSNative.exe next to the launcher or under the build tree."""
+    """The newest built LCSNative.exe next to the launcher or under the build tree."""
     names = ("LCSNative.exe", "lcs.exe")
     roots = [REPO_ROOT, REPO_ROOT / "lcs", REPO_ROOT / "out",
+             REPO_ROOT / "out" / "lcs-perf" / "lcs",
              REPO_ROOT / "out" / "lcs-clang", REPO_ROOT / "out" / "lcs-clang" / "lcs",
-             REPO_ROOT / "out" / "lcs-msvc", REPO_ROOT / "out" / "lcs-msvc" / "lcs"]
-    for root in roots:
-        for name in names:
-            candidate = root / name
-            if candidate.exists():
-                return candidate
-    return None
+             REPO_ROOT / "out" / "lcs-msvc", REPO_ROOT / "out" / "lcs-msvc" / "lcs",
+             REPO_ROOT / "out" / "lcs" / "lcs" / "Release"]
+    found = [root / name for root in roots for name in names if (root / name).is_file()]
+    return max(found, key=lambda path: path.stat().st_mtime) if found else None
 
 
 def main():

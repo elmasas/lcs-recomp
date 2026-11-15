@@ -28,6 +28,10 @@ endforeach()
 
 if(MSVC AND PSPRECOMP_NATIVE_AVX2)
     add_compile_options($<$<CONFIG:Release,RelWithDebInfo>:/arch:AVX2>)
+    # AVX2 brings FMA. Fusing a*b+c rounds differently from the PSP's separate steps, so keep guest floats exact.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options(/clang:-ffp-contract=off)
+    endif()
 endif()
 
 if(PSPRECOMP_LTO)
