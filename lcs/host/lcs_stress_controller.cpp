@@ -12,6 +12,199 @@ namespace {
 double separation(const std::array<float, 3> &a, const std::array<float, 3> &b) {
     return std::hypot(static_cast<double>(a[0]) - b[0], static_cast<double>(a[1]) - b[1]);
 }
+
+// Portland safehouse interior and the doorway the bike QA walks. z stays above 20 until the yard.
+bool portland_interior(const StressObservation &o) {
+    if (o.position[2] < 20.0f) return false;
+    return std::hypot(static_cast<double>(o.position[0]) - 1138.8,
+                       static_cast<double>(o.position[1]) + 242.405) < 45.0;
+}
+
+HostInputState safehouse_exit_input(const StressObservation &o, unsigned &step, bool &done) {
+    struct Point { float x, y, radius; };
+    static constexpr Point points[] = {
+        {1142.8f, -242.4f, 0.4f},
+        {1142.8f, -246.0f, 0.5f},
+        {1147.0f, -246.0f, 0.6f},
+        {1156.7f, -265.2f, 0.6f},
+    };
+    if (step >= std::size(points)) step = static_cast<unsigned>(std::size(points) - 1);
+    // Crossing the door jumps past the interior points. Keep going to the yard
+    // instead of turning around to a waypoint that is now back inside.
+    if (o.position[2] < 20.0f && step + 1u < std::size(points))
+        step = static_cast<unsigned>(std::size(points) - 1);
+    const Point &current = points[step];
+    if (std::hypot(static_cast<double>(o.position[0]) - current.x,
+                   static_cast<double>(o.position[1]) - current.y) < current.radius &&
+        step + 1u < std::size(points))
+        ++step;
+    const Point &target = points[step];
+    if (step + 1u == std::size(points) &&
+        std::hypot(static_cast<double>(o.position[0]) - target.x,
+                   static_cast<double>(o.position[1]) - target.y) < target.radius)
+        done = true;
+    DirectOrder order;
+    order.hold = false;
+    order.has_target = true;
+    order.target_x = target.x;
+    order.target_y = target.y;
+    order.arrival_radius = target.radius;
+    return apply_direct_order(order, o).input;
+}
+
+bool garage_stall_bike(const StressObservation &o) {
+    return o.bike_near && o.bike[0] > 1152.0f && o.bike[0] < 1162.0f &&
+           o.bike[1] < -266.0f && o.bike[1] > -275.0f;
+}
+
+// The enter prompt accepts a stand about 2.5 m north of the bike. Walking up to
+// the bike origin puts Toni on the stall wall, where Triangle does nothing.
+HostInputState garage_mount_input(const StressObservation &o, double seconds,
+                                  double &enter_until, double &enter_hold_until) {
+    // The enter animation walks Toni onto the bike. Steering again cancels it.
+    if (seconds < enter_until) {
+        HostInputState input;
+        if (seconds < enter_hold_until) input.buttons = kPspTriangle;
+        return input;
+    }
+    const float mount_x = o.bike[0];
+    float mount_y = o.bike[1] + 2.5f;
+    if (mount_y < -266.6f) mount_y = -266.6f;
+    const double stand = std::hypot(static_cast<double>(o.position[0]) - mount_x,
+                                     static_cast<double>(o.position[1]) - mount_y);
+    if (stand < 0.7) {
+        enter_until = seconds + 3.0;
+        enter_hold_until = seconds + 0.8;
+        HostInputState input;
+        input.buttons = kPspTriangle;
+        return input;
+    }
+    DirectOrder order;
+    order.hold = false;
+    order.has_target = true;
+    order.target_x = mount_x;
+    order.target_y = mount_y;
+    order.arrival_radius = 0.55f;
+    return apply_direct_order(order, o).input;
+}
+
+// The Portland block the bike QA rides, then repeats. Cruise is units/second.
+HostInputState block_loop_input(const StressObservation &o, unsigned &step, int &turn_hold, float speed) {
+    struct Point { float x, y, radius, cruise; };
+    static constexpr Point points[] = {
+        {1158.f, -239.f, 3.f, 5.5f},
+        {1158.f, -217.f, 4.f, 5.5f},
+        {1127.f, -212.f, 5.f, 7.f},
+        {1127.f, -240.f, 4.f, 6.f},
+        {1127.f, -276.f, 3.f, 8.f},
+        {1146.f, -284.f, 4.f, 5.5f},
+        {1187.f, -284.f, 5.f, 8.f},
+        {1198.f, -265.f, 4.f, 5.5f},
+        {1198.f, -217.f, 5.f, 8.f},
+        {1184.f, -207.f, 4.f, 5.5f},
+        {1163.f, -211.f, 2.f, 6.f},
+        {1161.f, -223.f, 2.f, 4.5f},
+        {1160.f, -235.f, 3.f, 5.5f},
+        {1157.f, -261.f, 2.f, 4.f},
+    };
+    if (step >= std::size(points)) step = 0;
+    for (unsigned n = 0; n < std::size(points); ++n) {
+        const Point &current = points[step];
+        if (std::hypot(static_cast<double>(o.position[0]) - current.x,
+                       static_cast<double>(o.position[1]) - current.y) >= current.radius)
+            break;
+        step = static_cast<unsigned>((step + 1u) % std::size(points));
+    }
+    const Point &target = points[step];
+    const double dx = static_cast<double>(target.x) - o.position[0];
+    const double dy = static_cast<double>(target.y) - o.position[1];
+    const double dist = std::max(0.001, std::hypot(dx, dy));
+    HostInputState input;
+    double fx = o.facing[0], fy = o.facing[1];
+    const double flen = std::hypot(fx, fy);
+    if (flen < 0.2) {
+        input.analog_x = 255u;
+        input.throttle = 40u;
+        return input;
+    }
+    fx /= flen;
+    fy /= flen;
+    const double cross = (fx * dy - fy * dx) / dist;
+    const double dot = (fx * dx + fy * dy) / dist;
+    // Facing away, cross chatters around zero and full lock fishtails the bike
+    // in place. Hold one moderate turn until the corner is in front again.
+    if (dot < 0.15) {
+        if (cross > 0.08) turn_hold = 1;
+        else if (cross < -0.08) turn_hold = -1;
+        else if (turn_hold == 0) turn_hold = -1;
+        const int steering = turn_hold > 0 ? 48 : 208;
+        input.analog_x = static_cast<std::uint8_t>(steering);
+        input.throttle = speed < 2.f ? 70u : 0u;
+        input.brake_pressure = speed > 1.5f ? 90u : 0u;
+        return input;
+    }
+    turn_hold = 0;
+    double turn = 0.0;
+    if (std::fabs(cross) >= 0.025)
+        turn = std::copysign(35.0 + 92.0 * std::min(1.0, std::fabs(cross) * 2.0), cross);
+    int steering = static_cast<int>(std::lround(128.0 - turn));
+    input.analog_x = static_cast<std::uint8_t>(std::clamp(steering, 0, 255));
+    double desired = std::min(static_cast<double>(target.cruise), std::max(5.0, dist * 0.8));
+    if (dot < 0.8) desired = std::min(desired, 3.0);
+    const int throttle = static_cast<int>(std::lround(35.0 + 30.0 * (desired - speed)));
+    const int brake = static_cast<int>(std::lround(18.0 * (speed - desired - 2.0)));
+    input.throttle = static_cast<std::uint8_t>(std::clamp(throttle, 0, 255));
+    input.brake_pressure = static_cast<std::uint8_t>(std::clamp(brake, 0, 100));
+    return input;
+}
+
+HostInputState approach_vehicle_input(const StressObservation &o, double seconds) {
+    const std::array<float, 3> *chosen = nullptr;
+    double best = 0.0;
+    bool garage_bike = false;
+    const auto consider = [&](bool near, const std::array<float, 3> &pos, bool bike) {
+        if (!near) return;
+        const double dist = std::hypot(static_cast<double>(o.position[0]) - pos[0],
+                                        static_cast<double>(o.position[1]) - pos[1]);
+        // A bike in this yard is the one parked against the garage wall.
+        if (bike && dist < 30.0) { chosen = &pos; best = dist; garage_bike = true; return; }
+        if (garage_bike || (chosen != nullptr && dist >= best)) return;
+        chosen = &pos; best = dist;
+    };
+    consider(o.bike_near, o.bike, true);
+    consider(o.vehicle_near, o.vehicle, false);
+    if (chosen == nullptr) return {};
+    const bool pulse = std::fmod(seconds, 1.5) < 0.25;
+    const bool stall = garage_bike && (*chosen)[0] > 1145.0f && (*chosen)[0] < 1170.0f &&
+                       (*chosen)[1] < -258.0f && (*chosen)[1] > -280.0f;
+    // The enter prompt is closer than the QA's two-metre mark on this save.
+    const double mount_x = static_cast<double>((*chosen)[0]);
+    const double mount_y = static_cast<double>((*chosen)[1]) + (stall ? 1.0 : 0.0);
+    const double stand = std::hypot(static_cast<double>(o.position[0]) - mount_x,
+                                     static_cast<double>(o.position[1]) - mount_y);
+    if ((stall && stand < 0.8) || (!stall && best < 2.2)) {
+        HostInputState input;
+        if (pulse) input.buttons = kPspTriangle;
+        return input;
+    }
+    double target_x = mount_x;
+    double target_y = mount_y;
+    if (!stall && best > 2.2) {
+        const double dx = static_cast<double>((*chosen)[0]) - o.position[0];
+        const double dy = static_cast<double>((*chosen)[1]) - o.position[1];
+        target_x = (*chosen)[0] - dx / best * 2.0;
+        target_y = (*chosen)[1] - dy / best * 2.0;
+    }
+    DirectOrder order;
+    order.hold = false;
+    order.has_target = true;
+    order.target_x = static_cast<float>(target_x);
+    order.target_y = static_cast<float>(target_y);
+    order.arrival_radius = stall ? 0.8f : 1.0f;
+    HostInputState input = apply_direct_order(order, o).input;
+    if (best < 3.0 && pulse) input.buttons |= kPspTriangle;
+    return input;
+}
 }
 HostInputState StressController::sample(double seconds, const StressObservation &o) {
     HostInputState input;
@@ -32,6 +225,26 @@ HostInputState StressController::sample(double seconds, const StressObservation 
         tracking_ = true; entity_ = o.entity;
         previous_ = anchor_ = o.position;
         observed_at_ = anchor_at_ = seconds; stalled_seconds_ = 0;
+        exit_step_ = 0;
+        exit_done_ = false;
+        enter_until_ = -1.0;
+        enter_hold_until_ = -1.0;
+        stall_cleared_ = false;
+        yard_left_ = false;
+        block_step_ = 0;
+        block_turn_ = 0;
+        block_speed_ = 0.f;
+        block_speed_at_ = -1.0;
+    }
+    if (block_speed_at_ < 0.0 || seconds < block_speed_at_) {
+        block_speed_pos_ = o.position;
+        block_speed_at_ = seconds;
+        block_speed_ = 0.f;
+    } else if (seconds - block_speed_at_ >= 0.05) {
+        block_speed_ = static_cast<float>(separation(block_speed_pos_, o.position) /
+                                           (seconds - block_speed_at_));
+        block_speed_pos_ = o.position;
+        block_speed_at_ = seconds;
     }
     if (seconds - observed_at_ >= 1.0) {
         const double moved = separation(previous_, o.position);
@@ -73,6 +286,58 @@ HostInputState StressController::sample(double seconds, const StressObservation 
         if (seek_vehicle_ && std::fmod(seconds - started_at_, 12.0) >= 10.0 &&
             std::fmod(seconds - started_at_, 12.0) < 10.25)
             input.buttons |= kPspTriangle;
+    }
+    // Stay on the doorway polyline after z drops. A straight line to the bike hits the garage wall.
+    const double from_safehouse = std::hypot(static_cast<double>(o.position[0]) - 1138.8,
+                                              static_cast<double>(o.position[1]) + 242.405);
+    const bool near_house = from_safehouse < 45.0;
+    const bool on_exit = !exit_done_ && near_house &&
+                         (portland_interior(o) || exit_step_ > 0);
+    if (o.driving && o.position[1] > -254.0f &&
+        o.position[0] > 1100.0f && o.position[0] < 1200.0f)
+        stall_cleared_ = true;
+    // The burnout is only for the garage mouth. Once the north street is reached
+    // it must not come back on the south and west sides of the block.
+    if (o.driving && stall_cleared_ && o.position[1] >= -230.0f)
+        yard_left_ = true;
+    const bool in_stall = !stall_cleared_ && o.position[2] < 20.0f &&
+                          o.position[0] > 1150.0f && o.position[0] < 1168.0f &&
+                          o.position[1] < -254.0f && o.position[1] > -280.0f;
+    // Once the bike has left the stall, keep turning until it faces out. Reversing
+    // again drives it back into the garage wall.
+    const bool nose_in_wall = !yard_left_ && stall_cleared_ && o.position[2] < 25.0f &&
+                              o.position[0] > 1100.0f && o.position[0] < 1200.0f &&
+                              o.position[1] < -230.0f && o.facing[1] < 0.3f &&
+                              std::hypot(static_cast<double>(o.facing[0]), o.facing[1]) > 0.5;
+    if (!o.driving && on_exit)
+        input = safehouse_exit_input(o, exit_step_, exit_done_);
+    else if (!o.driving && seek_vehicle_ && near_house && garage_stall_bike(o))
+        input = garage_mount_input(o, seconds, enter_until_, enter_hold_until_);
+    else if (!o.driving && seek_vehicle_ && near_house && o.position[2] < 20.0f) {
+        DirectOrder order;
+        order.hold = false;
+        order.has_target = true;
+        order.target_x = 1156.7f;
+        order.target_y = -266.5f;
+        order.arrival_radius = 0.5f;
+        input = apply_direct_order(order, o).input;
+    } else if (!o.driving && seek_vehicle_ && (o.bike_near || o.vehicle_near))
+        input = approach_vehicle_input(o, seconds);
+    else if (o.driving && in_stall) {
+        // Garage bikes face the back wall. Reverse until the opening is clear.
+        input.accelerate = false;
+        input.brake = true;
+        input.analog_y = 255u;
+        input.analog_x = 128u;
+        input.buttons = 0u;
+    } else if (o.driving && nose_in_wall) {
+        input.accelerate = true;
+        input.brake = true;
+        input.analog_x = 255u;
+        input.analog_y = 128u;
+        input.buttons = 0u;
+    } else if (o.driving && stall_cleared_ && recovery >= 5.0) {
+        input = block_loop_input(o, block_step_, block_turn_, block_speed_);
     }
     return input;
 }

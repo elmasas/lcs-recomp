@@ -342,7 +342,11 @@ HostInputState stress_test_input(psprecomp::Runtime &runtime, HostInputState phy
         if (seconds - last_log > 5.0 || static_cast<unsigned>(seconds) % 10u == 0u)
             std::cerr << "[stress] t=" << seconds << " ready=" << observation.ready
                       << " driving=" << observation.driving << " distance=" << controller.distance()
-                      << " recoveries=" << controller.recoveries() << "\n";
+                      << " recoveries=" << controller.recoveries()
+                      << " bike=" << observation.bike_near << "," << observation.bike[0] << ","
+                      << observation.bike[1]
+                      << " car=" << observation.vehicle_near << "," << observation.vehicle[0] << ","
+                      << observation.vehicle[1] << "\n";
         last_log = seconds;
     }
     return input;
