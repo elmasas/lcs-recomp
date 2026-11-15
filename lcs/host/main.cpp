@@ -8,6 +8,7 @@
 #include "ge_renderer.hpp"
 #include "lcs_perf_log.hpp"
 #include "lcs_stress_test.hpp"
+#include "lcs_crash.hpp"
 #include "lcs_profiler.hpp"
 #include "lcs_render_config.hpp"
 #include "lcs_region.hpp"
@@ -67,6 +68,8 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (const char *crash = std::getenv("LCS_CRASH_HANDLER"); crash == nullptr || *crash != '0')
+        lcs::install_crash_handlers();
     if (stress && !max_seconds_supplied) max_seconds = 600.0;
     if (stress && (!std::isfinite(max_seconds) || max_seconds <= 0.0)) {
         std::cerr << "Stress test requires a positive finite --max-seconds\n";
