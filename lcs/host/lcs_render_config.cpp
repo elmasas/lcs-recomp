@@ -420,8 +420,8 @@ void apply_timing_key(LcsConfiguration &config, const std::string &key,
                       const std::string &value, std::size_t line) {
     if (key == "framerate" || key == "fps" || key == "targetfps") {
         std::uint32_t frame_rate = 0u;
-        if (!parse_u32(value, 30u, 60u, frame_rate) || (frame_rate != 30u && frame_rate != 60u)) {
-            warning(config, line, "Timing.FrameRate expects 30 or 60");
+        if (!parse_u32(value, 30u, 100u, frame_rate) || (frame_rate != 30u && frame_rate < 60u)) {
+            warning(config, line, "Timing.FrameRate expects 30, or 60 to 100");
             return;
         }
         config.timing.frame_rate = frame_rate;
@@ -542,7 +542,7 @@ void lcs_set_show_fps(bool enabled) noexcept {
 }
 
 void lcs_set_frame_rate(std::uint32_t frame_rate) noexcept {
-    frame_rate = frame_rate <= 30u ? 30u : 60u;
+    frame_rate = frame_rate <= 30u ? 30u : std::clamp(frame_rate, 60u, 100u);
     std::lock_guard<std::mutex> guard(global_configuration_mutex());
     global_configuration().timing.frame_rate = frame_rate;
 }

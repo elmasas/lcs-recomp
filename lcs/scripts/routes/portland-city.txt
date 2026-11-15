@@ -1,0 +1,6 @@
+# Over the densest streets of Portland, from the street lights' positions, above the rooftops.
+1100 -300 120
+900 -300 120
+900 -950 120
+1150 -950 120
+1150 -300 120
