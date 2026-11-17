@@ -70,6 +70,8 @@ struct Dx12Batch {
     std::uint32_t feedback_address{};
     bool hardware_transform{};
     GeGpuHardwareTransform transform{};
+    // The list that queued this draw. A later list clears, then draws on top.
+    std::uint64_t render_epoch{};
 };
 
 struct Dx12TransformConstants {
@@ -351,6 +353,8 @@ struct Dx12GeState {
     std::uint64_t cache_full_epoch{~0ull};  // a frame in which nothing more could be evicted
     bool cache_over_logged{};
     std::uint64_t frame_epoch{1u};
+    std::uint64_t render_epoch{1u};
+    std::uint64_t deferred_list_splits{};
 
     ComPtr<IDXGISwapChain3> swapchain;
     ComPtr<ID3D12DescriptorHeap> swap_rtv_heap;
@@ -877,13 +881,16 @@ bool adjacent_batch_merge_compatible(const Dx12Batch &a, const Dx12Batch &b) noe
 }
 
 bool append_or_merge_batch(Dx12GeState &s, Dx12Batch batch) {
+    batch.render_epoch = s.render_epoch;
     static const bool merge_enabled = [] {
         const char *text = std::getenv("PSPRECOMP_DX12_BATCH_MERGE");
         return text == nullptr || (*text != '\0' && std::strcmp(text, "0") != 0 &&
                std::strcmp(text, "false") != 0 && std::strcmp(text, "FALSE") != 0 &&
                std::strcmp(text, "off") != 0 && std::strcmp(text, "OFF") != 0);
     }();
-    if (merge_enabled && !s.batches.empty() && adjacent_batch_merge_compatible(s.batches.back(), batch)) {
+    if (merge_enabled && !s.batches.empty() &&
+        s.batches.back().render_epoch == batch.render_epoch &&
+        adjacent_batch_merge_compatible(s.batches.back(), batch)) {
         Dx12Batch &previous = s.batches.back();
         const bool counts_fit =
             batch.vertex_count <= std::numeric_limits<std::uint32_t>::max() - previous.vertex_count &&
@@ -2827,6 +2834,7 @@ void destroy_backend(Dx12GeState &s) noexcept {
     s.next_sampler = 1u;
     s.frame_cursor = 0u;
     s.frame_epoch = 1u;
+    s.render_epoch = 1u;
     s.sample_count = 1u;
     s.sample_quality = 0u;
     s.depth_format = kDepthFormat;
@@ -3186,6 +3194,12 @@ void ge_gpu_backend_accumulate_hardware_triangles(
     }
 }
 
+bool ge_gpu_backend_repeat_packed_0115(
+    const GeGpuDrawDescriptor &, const GeGpuHardwareTransform &,
+    std::span<const std::byte>, std::uint32_t) noexcept {
+    return false;
+}
+
 bool ge_gpu_backend_accumulate_hardware_packed_0115(
     const GeGpuDrawDescriptor &draw,
     const GeGpuHardwareTransform &transform,
@@ -3318,11 +3332,16 @@ void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &he
     height = s.display_logical_height;
 }
 
+static void bump_dx12_epochs(Dx12GeState &s) noexcept {
+    if (++s.frame_epoch == 0u) s.frame_epoch = 1u;
+    if (++s.render_epoch == 0u) s.render_epoch = 1u;
+}
+
 bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
     Dx12GeState &s = state();
     if (!s.enabled || !s.device) {
         clear_accumulation(s);
-        ++s.frame_epoch;
+        bump_dx12_epochs(s);
         return false;
     }
     if ((s.vertices.empty() && s.packed_0115_vertices.empty()) || s.batches.empty()) {
@@ -3331,7 +3350,7 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
             s.presented_framebuffer = 0u;
         }
         clear_accumulation(s);
-        ++s.frame_epoch;
+        bump_dx12_epochs(s);
         return false;
     }
 
@@ -3343,7 +3362,7 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
     const std::size_t bytes = index_offset + index_bytes;
     if (bytes > kGeometryUploadCapacity) {
         clear_accumulation(s);
-        ++s.frame_epoch;
+        bump_dx12_epochs(s);
         return false;
     }
 
@@ -3437,7 +3456,8 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
             ? current_target : find_framebuffer_target(s, address);
         if (target == nullptr || !target->color || !target->depth) continue;
 
-        if (current_target != target) {
+        const bool new_epoch = target->last_render_epoch != batch.render_epoch;
+        if (current_target != target || new_epoch) {
             if (current_target != nullptr)
                 resolve_target_for_sampling(s, *current_target, false);
             prepare_target_for_render(s, *target);
@@ -3446,12 +3466,11 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
             s.list->OMSetRenderTargets(1u, &rtv, FALSE, &dsv);
 
             const bool first_ever_use = target->last_render_epoch == 0u;
-            const bool first_use_this_frame = target->last_render_epoch != s.frame_epoch;
-            if (first_use_this_frame) {
+            if (new_epoch) {
                 if (first_ever_use || address == s.display_framebuffer)
                     s.list->ClearRenderTargetView(rtv, black, 0u, nullptr);
                 s.list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.0f, 0u, 0u, nullptr);
-                target->last_render_epoch = s.frame_epoch;
+                target->last_render_epoch = batch.render_epoch;
             }
             current_target = target;
             current_address = address;
@@ -3622,7 +3641,7 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
             s.frame_cursor = (s.frame_cursor + 1u) % kFrameCount;
         }
         clear_accumulation(s);
-        ++s.frame_epoch;
+        bump_dx12_epochs(s);
         return false;
     }
 
@@ -3718,8 +3737,28 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept {
 
     clear_accumulation(s);
     s.frame_cursor = (s.frame_cursor + 1u) % kFrameCount;
-    ++s.frame_epoch;
+    bump_dx12_epochs(s);
     return presented || readback_now;
+}
+
+bool ge_gpu_backend_defer_list_split() noexcept {
+    Dx12GeState &s = state();
+    const std::size_t used = s.vertices.size() * sizeof(Dx12UploadVertex) +
+        s.indices.size() * sizeof(std::uint32_t) + s.packed_0115_vertices.size();
+    const bool crowded = !s.batches.empty() &&
+        (s.batches.size() >= 16384u || used > kGeometryUploadCapacity / 2u);
+    if (crowded || (s.enabled && s.device && s.list == nullptr && !s.batches.empty()))
+        return false;
+    if (++s.render_epoch == 0u) s.render_epoch = 1u;
+    for (auto &entry : s.textures) entry.second.signature_epoch = 0u;
+    ++s.deferred_list_splits;
+    return true;
+}
+
+std::uint64_t ge_gpu_backend_frame_epoch() noexcept { return state().frame_epoch; }
+
+std::uint64_t ge_gpu_backend_deferred_list_splits() noexcept {
+    return state().deferred_list_splits;
 }
 
 bool ge_gpu_backend_copy_game_frame_rgba(std::span<std::byte> destination) noexcept {
@@ -3759,7 +3798,11 @@ GeGpuBackendReport ge_gpu_backend_report() {
 #elif !defined(LCS_VULKAN_GE_BACKEND)
 
 namespace {
-struct Dx12StubState { std::uint32_t display_framebuffer{}; };
+struct Dx12StubState {
+    std::uint32_t display_framebuffer{};
+    std::uint64_t frame_epoch{1u};
+    std::uint64_t deferred_list_splits{};
+};
 Dx12StubState &state() { static Dx12StubState s; return s; }
 }
 bool initialize_ge_gpu_backend(std::string &error) {
@@ -3792,11 +3835,21 @@ bool ge_gpu_backend_upload_decoded_texture_chain_packed(const GeGpuDrawDescripto
 bool ge_gpu_backend_copy_last_texture_rgba(std::span<std::byte>) noexcept { return false; }
 void ge_gpu_backend_accumulate_color_triangles(const GeGpuDrawDescriptor &, std::span<const GeGpuVertex>) noexcept {}
 void ge_gpu_backend_accumulate_hardware_triangles(const GeGpuDrawDescriptor &, const GeGpuHardwareTransform &, std::span<const GeGpuVertex>, std::span<const std::uint32_t>) noexcept {}
+bool ge_gpu_backend_repeat_packed_0115(const GeGpuDrawDescriptor &, const GeGpuHardwareTransform &, std::span<const std::byte>, std::uint32_t) noexcept { return false; }
 bool ge_gpu_backend_accumulate_hardware_packed_0115(const GeGpuDrawDescriptor &, const GeGpuHardwareTransform &, std::span<const std::byte>, std::uint32_t, std::span<const std::uint32_t>) noexcept { return false; }
 void ge_gpu_backend_set_native_window(void *) noexcept {}
 void ge_gpu_backend_set_display_framebuffer(std::uint32_t address, std::uint32_t, std::uint32_t) noexcept { state().display_framebuffer = address & 0x001FFFF0u; }
 void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &height) noexcept { width = 480u; height = 272u; }
 bool ge_gpu_backend_finish_color_frame(std::uint64_t) noexcept { return false; }
+bool ge_gpu_backend_defer_list_split() noexcept {
+    auto &s = state();
+    ++s.deferred_list_splits;
+    return true;
+}
+std::uint64_t ge_gpu_backend_frame_epoch() noexcept { return state().frame_epoch; }
+std::uint64_t ge_gpu_backend_deferred_list_splits() noexcept {
+    return state().deferred_list_splits;
+}
 bool ge_gpu_backend_copy_game_frame_rgba(std::span<std::byte>) noexcept { return false; }
 bool ge_gpu_backend_presents_directly() noexcept { return false; }
 std::uint32_t ge_gpu_backend_owned_framebuffer() noexcept { return 0u; }

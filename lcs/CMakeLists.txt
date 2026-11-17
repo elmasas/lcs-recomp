@@ -79,6 +79,7 @@ else()
         COMMAND ${CMAKE_COMMAND}
             -DGLSLANG=${LCS_GLSLANG}
             -DVERT=${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/ge.vert
+            -DPACKED_VERT=${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/ge_packed.vert
             -DFRAG=${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/ge.frag
             -DPRESENT_VERT=${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/present.vert
             -DPRESENT_FRAG=${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/present.frag
@@ -86,6 +87,7 @@ else()
             -P ${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/embed_spirv.cmake
         DEPENDS
             ${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/ge.vert
+            ${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/ge_packed.vert
             ${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/ge.frag
             ${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/present.vert
             ${CMAKE_CURRENT_SOURCE_DIR}/host/vulkan/present.frag
@@ -168,6 +170,14 @@ if(PSPRECOMP_BUILD_TESTS)
     add_executable(lcs_world_detail_test ${CMAKE_SOURCE_DIR}/tests/lcs_world_detail_test.cpp)
     target_link_libraries(lcs_world_detail_test PRIVATE lcs_host)
     add_test(NAME lcs_world_detail_test COMMAND lcs_world_detail_test)
+    add_executable(lcs_ge_walk_test ${CMAKE_SOURCE_DIR}/tests/lcs_ge_walk_test.cpp)
+    target_link_libraries(lcs_ge_walk_test PRIVATE lcs_host)
+    add_test(NAME lcs_ge_walk_test COMMAND lcs_ge_walk_test)
+    if(NOT WIN32)
+        add_executable(lcs_vulkan_flight_test ${CMAKE_SOURCE_DIR}/tests/lcs_vulkan_flight_test.cpp)
+        target_link_libraries(lcs_vulkan_flight_test PRIVATE lcs_host)
+        add_test(NAME lcs_vulkan_flight_test COMMAND lcs_vulkan_flight_test)
+    endif()
     add_executable(lcs_stress_controller_test
         ${CMAKE_SOURCE_DIR}/tests/lcs_stress_controller_test.cpp
         host/lcs_stress_controller.cpp)

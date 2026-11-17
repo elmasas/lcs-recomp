@@ -1,4 +1,6 @@
 #include "ge_renderer.hpp"
+
+#include <immintrin.h>
 #include "lcs_perf_log.hpp"
 #include "ge_gpu_backend.hpp"
 #include "lcs_fps_overlay.hpp"
@@ -17,7 +19,6 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -723,39 +724,167 @@ GeGpuHardwareTransform build_gpu_hardware_transform(
     bool vertices_already_in_world_space = false,
     bool texture_coordinates_already_generated = false) noexcept {
     GeGpuHardwareTransform hw{};
-    const auto world = vertices_already_in_world_space
-        ? std::array<float, 16>{1.0f, 0.0f, 0.0f, 0.0f,
-                                0.0f, 1.0f, 0.0f, 0.0f,
-                                0.0f, 0.0f, 1.0f, 0.0f,
-                                0.0f, 0.0f, 0.0f, 1.0f}
-        : affine_4x3_to_mat4(transform.world);
-    const auto view = affine_4x3_to_mat4(transform.view);
-    const auto model_to_view = multiply_mat4(view, world);
-    hw.model_to_clip = multiply_mat4(transform.projection, model_to_view);
+    // PPSSPP BaseUpdateUniforms converts the world matrix only when
+    // DIRTY_WORLDMATRIX is set (GPU/Common/ShaderUniforms.cpp). The view
+    // convert below already works that way. A 12-float match reuses the 4x4.
+    // A different world, or vertices that are already in world space, still
+    // builds the matrix the product cache multiplies.
+    std::array<float, 16> world{};
+    if (vertices_already_in_world_space) {
+        world = {1.0f, 0.0f, 0.0f, 0.0f,
+                 0.0f, 1.0f, 0.0f, 0.0f,
+                 0.0f, 0.0f, 1.0f, 0.0f,
+                 0.0f, 0.0f, 0.0f, 1.0f};
+    } else {
+        struct WorldCache {
+            std::array<float, 12> world{};
+            std::array<float, 16> world_matrix{};
+            bool valid{};
+        };
+        static thread_local WorldCache world_cache;
+        if (world_cache.valid && world_cache.world == transform.world) {
+            world = world_cache.world_matrix;
+        } else {
+            world = affine_4x3_to_mat4(transform.world);
+            world_cache.world = transform.world;
+            world_cache.world_matrix = world;
+            world_cache.valid = true;
+        }
+    }
+    // The camera stays put across a run of buildings. Only the world matrix changes.
+    struct ViewCache {
+        std::array<float, 12> view{};
+        std::array<float, 16> view_matrix{};
+        bool valid{};
+    };
+    static thread_local ViewCache view_cache;
+    std::array<float, 16> view{};
+    if (view_cache.valid && view_cache.view == transform.view) {
+        view = view_cache.view_matrix;
+    } else {
+        view = affine_4x3_to_mat4(transform.view);
+        view_cache.view = transform.view;
+        view_cache.view_matrix = view;
+        view_cache.valid = true;
+    }
+    // Several primitives share one world matrix. Reuse the product while the
+    // multiply inputs match. The order stays projection * (view * world).
+    struct ProductCache {
+        std::array<float, 16> world{};
+        std::array<float, 16> view{};
+        std::array<float, 16> projection{};
+        std::array<float, 16> model_to_view{};
+        std::array<float, 16> model_to_clip{};
+        bool valid{};
+    };
+    static thread_local ProductCache product;
+    std::array<float, 16> model_to_view;
+    if (product.valid && product.world == world && product.view == view &&
+        product.projection == transform.projection) {
+        model_to_view = product.model_to_view;
+        hw.model_to_clip = product.model_to_clip;
+    } else {
+        model_to_view = multiply_mat4(view, world);
+        hw.model_to_clip = multiply_mat4(transform.projection, model_to_view);
+        product.world = world;
+        product.view = view;
+        product.projection = transform.projection;
+        product.model_to_view = model_to_view;
+        product.model_to_clip = hw.model_to_clip;
+        product.valid = true;
+    }
     hw.model_to_view_z = {model_to_view[2], model_to_view[6],
                           model_to_view[10], model_to_view[14]};
-    hw.viewport_scale_x = decode_float24(data24(commands[0x42u]));
-    hw.viewport_scale_y = decode_float24(data24(commands[0x43u]));
-    hw.viewport_scale_z = decode_float24(data24(commands[0x44u]));
-    hw.viewport_center_x = decode_float24(data24(commands[0x45u]));
-    hw.viewport_center_y = decode_float24(data24(commands[0x46u]));
-    hw.viewport_center_z = decode_float24(data24(commands[0x47u]));
-    hw.viewport_offset_x = static_cast<float>(data24(commands[0x4Cu]) & 0xFFFFu) / 16.0f;
-    hw.viewport_offset_y = static_cast<float>(data24(commands[0x4Du]) & 0xFFFFu) / 16.0f;
-    hw.uv_scale_u = texture_coordinates_already_generated
-        ? 1.0f : decode_float24(data24(commands[0x48u]));
-    hw.uv_scale_v = texture_coordinates_already_generated
-        ? 1.0f : decode_float24(data24(commands[0x49u]));
-    hw.uv_offset_u = texture_coordinates_already_generated
-        ? 0.0f : decode_float24(data24(commands[0x4Au]));
-    hw.uv_offset_v = texture_coordinates_already_generated
-        ? 0.0f : decode_float24(data24(commands[0x4Bu]));
-    hw.fog_end = decode_float24(data24(commands[0xCDu]));
-    hw.fog_slope = decode_float24(data24(commands[0xCEu]));
-    hw.depth_clip_enabled = (data24(commands[0x1Cu]) & 1u) != 0u;
-    hw.cull_enabled = gpu_hardware_cull_enabled() && (data24(commands[0x1Du]) & 1u) != 0u;
-    hw.accept_counter_clockwise = (data24(commands[0x9Bu]) & 1u) != 0u;
-
+    struct ScalarCache {
+        std::uint32_t words[17]{};
+        bool texture_generated{};
+        bool valid{};
+        float viewport_scale_x{};
+        float viewport_scale_y{};
+        float viewport_scale_z{};
+        float viewport_center_x{};
+        float viewport_center_y{};
+        float viewport_center_z{};
+        float viewport_offset_x{};
+        float viewport_offset_y{};
+        float uv_scale_u{};
+        float uv_scale_v{};
+        float uv_offset_u{};
+        float uv_offset_v{};
+        float fog_end{};
+        float fog_slope{};
+        bool depth_clip_enabled{};
+        bool cull_enabled{};
+        bool accept_counter_clockwise{};
+    };
+    static thread_local ScalarCache scalars;
+    const std::uint32_t words[17] = {
+        data24(commands[0x42u]), data24(commands[0x43u]), data24(commands[0x44u]),
+        data24(commands[0x45u]), data24(commands[0x46u]), data24(commands[0x47u]),
+        data24(commands[0x48u]), data24(commands[0x49u]), data24(commands[0x4Au]),
+        data24(commands[0x4Bu]), data24(commands[0x4Cu]), data24(commands[0x4Du]),
+        data24(commands[0xCDu]), data24(commands[0xCEu]),
+        data24(commands[0x1Cu]), data24(commands[0x1Du]), data24(commands[0x9Bu])};
+    const bool same_scalars = scalars.valid &&
+        scalars.texture_generated == texture_coordinates_already_generated &&
+        std::equal(std::begin(words), std::end(words), std::begin(scalars.words));
+    if (same_scalars) {
+        hw.viewport_scale_x = scalars.viewport_scale_x;
+        hw.viewport_scale_y = scalars.viewport_scale_y;
+        hw.viewport_scale_z = scalars.viewport_scale_z;
+        hw.viewport_center_x = scalars.viewport_center_x;
+        hw.viewport_center_y = scalars.viewport_center_y;
+        hw.viewport_center_z = scalars.viewport_center_z;
+        hw.viewport_offset_x = scalars.viewport_offset_x;
+        hw.viewport_offset_y = scalars.viewport_offset_y;
+        hw.uv_scale_u = scalars.uv_scale_u;
+        hw.uv_scale_v = scalars.uv_scale_v;
+        hw.uv_offset_u = scalars.uv_offset_u;
+        hw.uv_offset_v = scalars.uv_offset_v;
+        hw.fog_end = scalars.fog_end;
+        hw.fog_slope = scalars.fog_slope;
+        hw.depth_clip_enabled = scalars.depth_clip_enabled;
+        hw.cull_enabled = scalars.cull_enabled;
+        hw.accept_counter_clockwise = scalars.accept_counter_clockwise;
+        return hw;
+    }
+    hw.viewport_scale_x = decode_float24(words[0]);
+    hw.viewport_scale_y = decode_float24(words[1]);
+    hw.viewport_scale_z = decode_float24(words[2]);
+    hw.viewport_center_x = decode_float24(words[3]);
+    hw.viewport_center_y = decode_float24(words[4]);
+    hw.viewport_center_z = decode_float24(words[5]);
+    hw.viewport_offset_x = static_cast<float>(words[10] & 0xFFFFu) / 16.0f;
+    hw.viewport_offset_y = static_cast<float>(words[11] & 0xFFFFu) / 16.0f;
+    hw.uv_scale_u = texture_coordinates_already_generated ? 1.0f : decode_float24(words[6]);
+    hw.uv_scale_v = texture_coordinates_already_generated ? 1.0f : decode_float24(words[7]);
+    hw.uv_offset_u = texture_coordinates_already_generated ? 0.0f : decode_float24(words[8]);
+    hw.uv_offset_v = texture_coordinates_already_generated ? 0.0f : decode_float24(words[9]);
+    hw.fog_end = decode_float24(words[12]);
+    hw.fog_slope = decode_float24(words[13]);
+    hw.depth_clip_enabled = (words[14] & 1u) != 0u;
+    hw.cull_enabled = gpu_hardware_cull_enabled() && (words[15] & 1u) != 0u;
+    hw.accept_counter_clockwise = (words[16] & 1u) != 0u;
+    scalars.texture_generated = texture_coordinates_already_generated;
+    std::copy(std::begin(words), std::end(words), std::begin(scalars.words));
+    scalars.viewport_scale_x = hw.viewport_scale_x;
+    scalars.viewport_scale_y = hw.viewport_scale_y;
+    scalars.viewport_scale_z = hw.viewport_scale_z;
+    scalars.viewport_center_x = hw.viewport_center_x;
+    scalars.viewport_center_y = hw.viewport_center_y;
+    scalars.viewport_center_z = hw.viewport_center_z;
+    scalars.viewport_offset_x = hw.viewport_offset_x;
+    scalars.viewport_offset_y = hw.viewport_offset_y;
+    scalars.uv_scale_u = hw.uv_scale_u;
+    scalars.uv_scale_v = hw.uv_scale_v;
+    scalars.uv_offset_u = hw.uv_offset_u;
+    scalars.uv_offset_v = hw.uv_offset_v;
+    scalars.fog_end = hw.fog_end;
+    scalars.fog_slope = hw.fog_slope;
+    scalars.depth_clip_enabled = hw.depth_clip_enabled;
+    scalars.cull_enabled = hw.cull_enabled;
+    scalars.accept_counter_clockwise = hw.accept_counter_clockwise;
+    scalars.valid = true;
     return hw;
 }
 
@@ -1049,6 +1178,42 @@ Color apply_prepared_lighting(Color input, Vec3 world_position, Vec3 world_norma
     return from_float_color(result);
 }
 
+// Directional lights with no power. The general function's point, spot, and
+// specular branches are not taken, and the remaining arithmetic matches it,
+// including the second normalize.
+bool lights_are_directional(const PreparedLighting &state) noexcept {
+    if (!state.enabled) return true;
+    for (const PreparedLight &light : state.lights) {
+        if (!light.enabled) continue;
+        if (light.type != 0u || light.computation != 0u) return false;
+    }
+    return true;
+}
+
+Color light_directional_1df(Color input, Vec3 world_normal,
+                            const PreparedLighting &state) noexcept {
+    if (!state.enabled) return input;
+    const std::uint32_t material_update = state.material_update;
+    const FloatColor vertex = to_float_color(input);
+    const FloatColor material_ambient = (material_update & 1u) != 0u
+        ? vertex : state.material_ambient;
+    const FloatColor material_diffuse = (material_update & 2u) != 0u
+        ? vertex : state.material_diffuse;
+    FloatColor result = state.emissive;
+    const FloatColor base_ambient = multiply(material_ambient, state.global_ambient);
+    add_rgb(result, base_ambient);
+    result.a = base_ambient.a;
+    world_normal = normalized_or_001(world_normal);
+    for (const PreparedLight &light : state.lights) {
+        if (!light.enabled) continue;
+        add_rgb(result, multiply(light.ambient, material_ambient, 1.0f));
+        const float diffuse_factor = dot(light.vector, world_normal);
+        if (diffuse_factor > 0.0f)
+            add_rgb(result, multiply(light.diffuse, material_diffuse, diffuse_factor));
+    }
+    return from_float_color(result);
+}
+
 Color apply_lighting(Color input, bool has_vertex_color, Vec3 world_position,
                      Vec3 world_normal, const std::array<std::uint32_t, 256> &commands) {
     return apply_prepared_lighting(input, world_position, world_normal,
@@ -1305,12 +1470,70 @@ bool decode_vertex_0115_fast(const psprecomp::GuestMemory &memory, std::uint32_t
     return true;
 }
 
+bool layout_is_1df(const VertexLayout &layout, std::uint32_t uv_generation) noexcept;
+void decode_1df_span(const std::uint8_t *raw, std::size_t count,
+                     const GeTransformState &transform,
+                     const std::array<std::uint32_t, 256> &commands,
+                     bool lighting_enabled, const PreparedLighting *prepared,
+                     GeGpuVertex *out);
+
+bool decode_vertex_1df_fast(const psprecomp::GuestMemory &memory, std::uint32_t address,
+                            const VertexLayout &layout,
+                            const std::array<std::uint32_t, 256> &commands,
+                            const GeTransformState &transform,
+                            Vertex &vertex, std::string &error) {
+    const std::uint8_t *raw = memory.raw_pointer(address, layout.stride);
+    if (raw == nullptr) return false;
+    const bool lighting_enabled = (data24(commands[0x17u]) & 1u) != 0u;
+    GeGpuVertex decoded{};
+    decode_1df_span(raw, 1u, transform, commands, lighting_enabled, nullptr, &decoded);
+    const Vec3 model_or_world{decoded.x, decoded.y, decoded.z};
+    const Vec3 world_position = lighting_enabled
+        ? model_or_world : transform_4x3(transform.world, model_or_world);
+    vertex.color = unpack32(decoded.rgba);
+    vertex.u = decoded.u;
+    vertex.v = decoded.v;
+    const Vec3 view = transform_4x3(transform.view, world_position);
+    if ((data24(commands[0x1Fu]) & 1u) != 0u) {
+        const float fog_end = decode_float24(data24(commands[0xCDu]));
+        const float fog_slope = decode_float24(data24(commands[0xCEu]));
+        const float fog = (view.z + fog_end) * fog_slope;
+        vertex.fog_factor = std::isfinite(fog) ? std::clamp(fog, 0.0f, 1.0f) : 1.0f;
+    } else {
+        vertex.fog_factor = 1.0f;
+    }
+    const Vec4 clip = transform_4x4(transform.projection, view);
+    vertex.x = clip.x;
+    vertex.y = clip.y;
+    vertex.z = clip.z;
+    vertex.w = clip.w;
+    vertex.inv_w = 0.0f;
+    vertex.q = 1.0f;
+    const std::uint32_t uv_generation = data24(commands[0xC0u]) & 3u;
+    if (uv_generation == 0u || uv_generation == 3u) {
+        const std::uint32_t texture_size = data24(commands[0xB8u]);
+        const float texture_width = static_cast<float>(1u << (texture_size & 0xFu));
+        const float texture_height = static_cast<float>(1u << ((texture_size >> 8u) & 0xFu));
+        const float scale_u = decode_float24(data24(commands[0x48u]));
+        const float scale_v = decode_float24(data24(commands[0x49u]));
+        const float offset_u = decode_float24(data24(commands[0x4Au]));
+        const float offset_v = decode_float24(data24(commands[0x4Bu]));
+        vertex.u = (vertex.u * scale_u + offset_u) * texture_width;
+        vertex.v = (vertex.v * scale_v + offset_v) * texture_height;
+    }
+    (void)error;
+    return true;
+}
+
 bool decode_vertex_optimized(const psprecomp::GuestMemory &memory, std::uint32_t address,
                              const VertexLayout &layout,
                              const std::array<std::uint32_t, 256> &commands,
                              const GeTransformState &transform,
                              Vertex &vertex, std::string &error) {
     const std::uint32_t uv_mode = data24(commands[0xC0u]) & 3u;
+    if (layout_is_1df(layout, uv_mode) &&
+        decode_vertex_1df_fast(memory, address, layout, commands, transform, vertex, error))
+        return true;
     if (layout.type == 0x000115u && !layout.through &&
         (data24(commands[0x17u]) & 1u) == 0u && (uv_mode == 0u || uv_mode == 3u))
         return decode_vertex_0115_fast(memory, address, layout, commands, transform, vertex, error);
@@ -1890,6 +2113,141 @@ std::uint32_t selected_texture_level(const std::array<std::uint32_t, 256> &comma
 }
 std::uint32_t clut_address(const std::array<std::uint32_t, 256> &commands) noexcept {
     return (data24(commands[0xB0u]) & 0x00FFFFF0u) | ((data24(commands[0xB1u]) << 8u) & 0x0F000000u);
+}
+
+void apply_repeat_texture(const std::array<std::uint32_t, 256> &commands,
+                          GeGpuDrawDescriptor &draw) noexcept {
+    draw.texture_format = data24(commands[0xC3u]) & 0xFu;
+    draw.texture_selected_level = selected_texture_level(commands);
+    for (std::uint32_t level = 0u; level < 8u; ++level) {
+        draw.texture_level_addresses[level] = texture_address(commands, level);
+        draw.texture_level_buffer_widths[level] =
+            std::max<std::uint32_t>(1u, data24(commands[0xA8u + level]) & 0x7FFu);
+        const std::uint32_t size = data24(commands[0xB8u + level]);
+        draw.texture_level_widths[level] = 1u << (size & 0xFu);
+        draw.texture_level_heights[level] = 1u << ((size >> 8u) & 0xFu);
+    }
+    draw.texture_address = draw.texture_level_addresses[0];
+    draw.texture_buffer_width = draw.texture_level_buffer_widths[0];
+    draw.texture_width = draw.texture_level_widths[0];
+    draw.texture_height = draw.texture_level_heights[0];
+    const std::uint32_t texfunc = data24(commands[0xC9u]);
+    draw.texture_function = texfunc & 7u;
+    draw.texture_use_alpha = (texfunc & 0x100u) != 0u;
+    draw.texture_double_color = (texfunc & 0x10000u) != 0u;
+    draw.texture_env = data24(commands[0xCAu]) & 0x00FFFFFFu;
+    draw.clut_address = clut_address(commands);
+    const std::uint32_t clut_data = data24(commands[0xC5u]);
+    draw.clut_format = clut_data & 3u;
+    draw.clut_shift = (clut_data >> 2u) & 0x1Fu;
+    draw.clut_mask = (clut_data >> 8u) & 0xFFu;
+    draw.clut_start = ((clut_data >> 16u) & 0x1Fu) << 4u;
+    const std::uint32_t texture_mode = data24(commands[0xC2u]);
+    const std::uint32_t texture_filter = data24(commands[0xC6u]);
+    const std::uint32_t texture_level = data24(commands[0xC8u]);
+    draw.texture_swizzled = (texture_mode & 1u) != 0u;
+    draw.texture_min_linear = (texture_filter & 1u) != 0u;
+    draw.texture_mipmap_linear = (texture_filter & 2u) != 0u;
+    draw.texture_mipmap_enabled = (texture_filter & 4u) != 0u;
+    draw.texture_mag_linear = ((texture_filter >> 8u) & 1u) != 0u;
+    draw.texture_linear = draw.texture_mag_linear;
+    draw.texture_max_level = (texture_mode >> 16u) & 7u;
+    draw.texture_level_mode = texture_level & 3u;
+    draw.texture_level_offset16 = signed_texture_lod_offset16(texture_level);
+    draw.texture_lod_slope = decode_float24(data24(commands[0xD0u]));
+    const std::uint32_t texture_wrap = data24(commands[0xC7u]);
+    draw.texture_clamp_u = (texture_wrap & 1u) != 0u;
+    draw.texture_clamp_v = (texture_wrap & 0x100u) != 0u;
+}
+
+void apply_repeat_pixel_state(const std::array<std::uint32_t, 256> &commands,
+                              GeGpuDrawDescriptor &draw) noexcept {
+    draw.texture_enabled = (data24(commands[0x1Eu]) & 1u) != 0u;
+    draw.fog_enabled = (data24(commands[0x1Fu]) & 1u) != 0u;
+    draw.fog_color = data24(commands[0xCFu]) & 0x00FFFFFFu;
+    draw.blend_enabled = (data24(commands[0x21u]) & 1u) != 0u;
+    const std::uint32_t blend_mode = data24(commands[0xDFu]);
+    draw.blend_source_factor = blend_mode & 0xFu;
+    draw.blend_dest_factor = (blend_mode >> 4u) & 0xFu;
+    draw.blend_equation = (blend_mode >> 8u) & 7u;
+    draw.blend_fix_source = data24(commands[0xE0u]) & 0x00FFFFFFu;
+    draw.blend_fix_dest = data24(commands[0xE1u]) & 0x00FFFFFFu;
+    const std::uint32_t alpha_test = data24(commands[0xDBu]);
+    draw.alpha_test_enabled = (data24(commands[0x22u]) & 1u) != 0u;
+    draw.alpha_function = alpha_test & 7u;
+    draw.alpha_reference = (alpha_test >> 8u) & 0xFFu;
+    draw.alpha_mask = (alpha_test >> 16u) & 0xFFu;
+    draw.depth_test_enabled = (data24(commands[0x23u]) & 1u) != 0u;
+    draw.depth_write_enabled = (data24(commands[0xE7u]) & 1u) == 0u;
+    draw.depth_function = data24(commands[0xDEu]) & 7u;
+    draw.color_write_mask = data24(commands[0xE8u]) |
+        ((data24(commands[0xE9u]) & 0xFFu) << 24u);
+}
+
+struct ClutChecksumCache {
+    std::uint32_t address{};
+    std::uint32_t format{};
+    std::uint32_t mask{};
+    std::uint32_t start{};
+    std::uint32_t checksum{};
+    bool valid{};
+};
+
+ClutChecksumCache &clut_checksum_cache() noexcept {
+    static ClutChecksumCache cache;
+    return cache;
+}
+
+void write_clut_checksum(const psprecomp::GuestMemory &memory,
+                         GeGpuDrawDescriptor &draw) noexcept {
+    draw.clut_checksum = 0u;
+    if (draw.texture_format < 4u || draw.texture_format > 7u || draw.clut_address == 0u)
+        return;
+    ClutChecksumCache &cache = clut_checksum_cache();
+    if (cache.valid && cache.address == draw.clut_address && cache.format == draw.clut_format &&
+        cache.mask == draw.clut_mask && cache.start == draw.clut_start) {
+        draw.clut_checksum = cache.checksum;
+        return;
+    }
+    const std::uint32_t entry_bytes = draw.clut_format == 3u ? 4u : 2u;
+    const std::uint32_t first = std::min(draw.clut_start, 255u);
+    const std::uint32_t last = std::min(first + draw.clut_mask, 255u);
+    const std::uint32_t offset_bytes = first * entry_bytes;
+    const std::uint32_t clut_bytes = (last - first + 1u) * entry_bytes;
+    const std::uint8_t *clut = memory.raw_pointer(draw.clut_address + offset_bytes, clut_bytes);
+    if (clut == nullptr) return;
+    std::uint32_t checksum = 2166136261u;
+    std::uint32_t offset = 0u;
+    if ((reinterpret_cast<std::uintptr_t>(clut) & 3u) == 0u) {
+        const auto *words = reinterpret_cast<const std::uint32_t *>(clut);
+        const std::uint32_t count = clut_bytes / 4u;
+        for (std::uint32_t i = 0u; i < count; ++i) {
+            checksum ^= words[i];
+            checksum *= 16777619u;
+        }
+        offset = count * 4u;
+    } else {
+        for (; offset + 4u <= clut_bytes; offset += 4u) {
+            std::uint32_t word = 0u;
+            std::memcpy(&word, clut + offset, sizeof word);
+            checksum ^= word;
+            checksum *= 16777619u;
+        }
+    }
+    if (offset < clut_bytes) {
+        std::uint32_t tail = clut[offset];
+        if (offset + 1u < clut_bytes)
+            tail |= static_cast<std::uint32_t>(clut[offset + 1u]) << 8u;
+        checksum ^= tail;
+        checksum *= 16777619u;
+    }
+    draw.clut_checksum = checksum;
+    cache.address = draw.clut_address;
+    cache.format = draw.clut_format;
+    cache.mask = draw.clut_mask;
+    cache.start = draw.clut_start;
+    cache.checksum = checksum;
+    cache.valid = true;
 }
 
 std::uint32_t bytes_per_pixel(std::uint32_t format) noexcept { return format == 3u ? 4u : 2u; }
@@ -3726,6 +4084,77 @@ void scale_hud_vertices(std::vector<Vertex> &vertices, std::uint32_t primitive,
     gpu_draw.scissor_y1 = setup.scissor_y1;
 }
 
+// Vertex type 0x0001df: float UV, 8888 color, 16-bit normal, float position,
+// no weights. PPSSPP's handwritten decoders (commit 81f1b3fd95) replace the
+// function-call-stitched steps for one layout. The software walker and the
+// hardware job both call this. A format it does not recognize stays on
+// decode_vertex / decode_model_vertex_for_gpu.
+bool layout_is_1df(const VertexLayout &layout, std::uint32_t uv_generation) noexcept {
+    return layout.type == 0x0001dfu && !layout.through && layout.stride == 32u &&
+        layout.morph_count == 1u && layout.weight_type == 0u &&
+        layout.tc_offset == 0u && layout.color_offset == 8u &&
+        layout.normal_offset == 12u && layout.position_offset == 20u &&
+        (uv_generation == 0u || uv_generation == 3u);
+}
+
+void store_model_gpu_vertex(GeGpuVertex &vertex, Vec3 position, float u, float v,
+                            Color color) noexcept {
+    vertex = {};
+    vertex.x = position.x;
+    vertex.y = position.y;
+    vertex.z = position.z;
+    vertex.w = 1.0f;
+    vertex.u = u;
+    vertex.v = v;
+    vertex.q = 1.0f;
+    vertex.fog_factor = 1.0f;
+    vertex.rgba = pack32(color);
+}
+
+void decode_1df_span(const std::uint8_t *raw, std::size_t count,
+                     const GeTransformState &transform,
+                     const std::array<std::uint32_t, 256> &commands,
+                     bool lighting_enabled, const PreparedLighting *prepared,
+                     GeGpuVertex *out) {
+    PreparedLighting local{};
+    const PreparedLighting *lighting = prepared;
+    if (lighting_enabled && lighting == nullptr) {
+        local = prepare_lighting(true, commands);
+        lighting = &local;
+    }
+    const bool directional = lighting_enabled && lighting != nullptr &&
+        lights_are_directional(*lighting);
+    const bool reverse_normals = (data24(commands[0x51u]) & 1u) != 0u;
+    const std::array<float, 12> &world = transform.world;
+    for (std::size_t i = 0u; i < count; ++i) {
+        const std::uint8_t *vertex_bytes = raw + i * 32u;
+        const float u = std::bit_cast<float>(raw_le32(vertex_bytes));
+        const float v = std::bit_cast<float>(raw_le32(vertex_bytes + 4u));
+        Color color = unpack32(raw_le32(vertex_bytes + 8u));
+        Vec3 position{
+            std::bit_cast<float>(raw_le32(vertex_bytes + 20u)),
+            std::bit_cast<float>(raw_le32(vertex_bytes + 24u)),
+            std::bit_cast<float>(raw_le32(vertex_bytes + 28u)),
+        };
+        if (lighting_enabled && lighting != nullptr) {
+            const Vec3 normal{
+                signed_normalized16(raw_le16(vertex_bytes + 12u)),
+                signed_normalized16(raw_le16(vertex_bytes + 14u)),
+                signed_normalized16(raw_le16(vertex_bytes + 16u)),
+            };
+            const Vec3 world_position = transform_4x3(world, position);
+            Vec3 world_normal = transform_normal_4x3(world, normal);
+            if (reverse_normals) world_normal = world_normal * -1.0f;
+            world_normal = normalized_or_001(world_normal);
+            color = directional
+                ? light_directional_1df(color, world_normal, *lighting)
+                : apply_prepared_lighting(color, world_position, world_normal, *lighting);
+            position = world_position;
+        }
+        store_model_gpu_vertex(out[i], position, u, v, color);
+    }
+}
+
 }
 
 bool test_ge_bounding_box(const psprecomp::GuestMemory &memory,
@@ -3855,7 +4284,13 @@ bool hw_job_prepare(HwDrawJob &job) {
         const Vec3 *world_normal = job.has_world_normal ? &job.fast_0115_world_normal : nullptr;
         const PreparedLighting *lighting =
             job.cpu_lighting_effective ? &job.prepared_lighting : nullptr;
-        for (std::size_t i = 0u; i < job.decode_count; ++i) {
+        const bool fast_1df = job.contiguous_raw != nullptr && job.fast_0115_raw == nullptr &&
+            layout_is_1df(job.layout, job.uv_generation);
+        if (fast_1df) {
+            decode_1df_span(job.contiguous_raw, job.decode_count, job.transform, job.commands,
+                            job.cpu_lighting_effective, lighting, job.decoded_vertices.data());
+        }
+        for (std::size_t i = fast_1df ? job.decode_count : 0u; i < job.decode_count; ++i) {
             const std::uint32_t index = job.contiguous_decode
                                             ? job.contiguous_first + static_cast<std::uint32_t>(i)
                                             : job.unique_indices[i];
@@ -4109,7 +4544,126 @@ HwDrawQueue &hw_draw_queue() {
     return queue;
 }
 
+struct PackedRepeat {
+    bool ready{};
+    bool lit{};
+    std::uint64_t revision{};
+    std::uint64_t material_revision{};
+    GeGpuDrawDescriptor draw{};
+    PreparedLighting lighting{};
+};
+
+PackedRepeat &packed_repeat() {
+    static thread_local PackedRepeat state;
+    return state;
+}
+
+std::uint64_t &pipeline_revision_slot() {
+    static thread_local std::uint64_t revision = 1u;
+    return revision;
+}
+
 }  // namespace
+
+std::array<float, 16> ge_model_to_clip(const std::array<std::uint32_t, 256> &commands,
+                                      const GeTransformState &transform) {
+    return build_gpu_hardware_transform(commands, transform).model_to_clip;
+}
+
+std::uint64_t ge_sync_packed_material(const std::array<std::uint32_t, 256> &commands,
+                                     GeGpuDrawDescriptor &draw,
+                                     std::uint64_t applied) noexcept {
+    const std::uint64_t current = ge_material_revision();
+    if (applied == current) return current;
+    apply_repeat_texture(commands, draw);
+    apply_repeat_pixel_state(commands, draw);
+    return current;
+}
+
+void ge_invalidate_clut_checksum() noexcept { clut_checksum_cache().valid = false; }
+
+std::uint32_t ge_cached_clut_checksum(const psprecomp::GuestMemory &memory,
+                                     GeGpuDrawDescriptor &draw) noexcept {
+    write_clut_checksum(memory, draw);
+    return draw.clut_checksum;
+}
+
+void ge_disarm_packed_repeat() noexcept {
+    packed_repeat().ready = false;
+}
+
+void ge_set_pipeline_revision(std::uint64_t revision) noexcept {
+    pipeline_revision_slot() = revision;
+}
+
+bool ge_try_packed_repeat(psprecomp::GuestMemory &memory,
+                          const std::array<std::uint32_t, 256> &commands,
+                          const GeTransformState &transform,
+                          std::uint32_t vertex_address,
+                          std::uint32_t primitive_data,
+                          std::uint64_t draw_state_revision,
+                          std::uint32_t &next_vertex_address) {
+    PackedRepeat &state = packed_repeat();
+    if (!state.ready || state.revision != pipeline_revision_slot() || !ge_gpu_backend_active())
+        return false;
+    (void)draw_state_revision;
+    if (hw_draw_queue().pending()) return false;
+    const std::uint32_t primitive = (primitive_data >> 16u) & 7u;
+    const std::uint32_t count = primitive_data & 0xFFFFu;
+    if (count == 0u) {
+        next_vertex_address = vertex_address;
+        return true;
+    }
+    if ((primitive != 3u && primitive != 4u) || (primitive == 3u && (count % 3u) != 0u) ||
+        (primitive == 4u && count < 3u))
+        return false;
+    const std::uint32_t bytes = count * 10u;
+    const std::uint8_t *raw = memory.raw_pointer(vertex_address, bytes);
+    if (raw == nullptr) return false;
+
+    GeGpuDrawDescriptor draw = state.draw;
+    draw.primitive = primitive;
+    draw.vertex_count = count;
+    const std::uint64_t synced = ge_sync_packed_material(commands, draw, state.material_revision);
+    if (synced != state.material_revision) {
+        state.material_revision = synced;
+        state.draw = draw;
+    }
+    draw.texture_content_signature = 0u;
+    draw.texture_cache_key_hint = 0u;
+    draw.texture_image_key_hint = 0u;
+    write_clut_checksum(memory, draw);
+    ge_gpu_backend_prepare_texture_keys(draw);
+
+    const std::uint32_t uv_generation = data24(commands[0xC0u]) & 3u;
+    GeGpuHardwareTransform hw = build_gpu_hardware_transform(
+        commands, transform, false, uv_generation == 1u || uv_generation == 2u);
+    hw.primitive = primitive;
+    hw.logical_prim_batches = 1u;
+    hw.unique_vertices_decoded = count;
+    hw.index_reuses = 0u;
+    if (state.lit) {
+        Vec3 normal = transform_normal_4x3(transform.world, Vec3{0.0f, 0.0f, 1.0f});
+        if ((data24(commands[0x51u]) & 1u) != 0u) normal = normal * -1.0f;
+        normal = normalized_or_001(normal);
+        std::array<float, 4> mul{};
+        std::array<float, 4> add{};
+        if (!prepare_directional_lighting_affine(state.lighting, normal, mul, add))
+            return false;
+        hw.vertex_color_affine = true;
+        hw.vertex_color_mul = mul;
+        hw.vertex_color_add = add;
+    }
+    if (!ge_gpu_backend_repeat_packed_0115(
+            draw, hw,
+            std::span<const std::byte>(reinterpret_cast<const std::byte *>(raw), bytes),
+            count))
+        return false;
+    if (!draw.clear_mode && primitive >= 3u && primitive <= 6u)
+        fps_overlay_observe_draw(draw, count);
+    next_vertex_address = vertex_address + bytes;
+    return true;
+}
 
 bool render_ge_primitive(psprecomp::GuestMemory &memory,
                          const std::array<std::uint32_t, 256> &commands,
@@ -4125,6 +4679,8 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
                          std::uint64_t lighting_state_revision) {
     stats.next_vertex_address = vertex_address;
     stats.next_index_address = index_address;
+    // Keep an armed packed draw across a sprite or a lighting miss. A command
+    // that changes the vertex type, target, or clear mode already disarmed it.
     const std::uint32_t primitive = (primitive_data >> 16u) & 7u;
     const std::uint32_t count = primitive_data & 0xFFFFu;
     if (count == 0u) return true;
@@ -4233,35 +4789,7 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
         gpu_draw.vertex_count = count;
 
         // Palette checksum and the once-per-frame texture hash.
-        gpu_draw.clut_checksum = 0u;
-        if (gpu_draw.texture_format >= 4u && gpu_draw.texture_format <= 7u &&
-            gpu_draw.clut_address != 0u) {
-            const std::uint32_t entry_bytes = gpu_draw.clut_format == 3u ? 4u : 2u;
-            const std::uint32_t first = std::min(gpu_draw.clut_start, 255u);
-            const std::uint32_t last = std::min(first + gpu_draw.clut_mask, 255u);
-            const std::uint32_t offset_bytes = first * entry_bytes;
-            const std::uint32_t clut_bytes = (last - first + 1u) * entry_bytes;
-            if (const std::uint8_t *clut = memory.raw_pointer(
-                    gpu_draw.clut_address + offset_bytes, clut_bytes)) {
-                std::uint32_t checksum = 2166136261u;
-                std::uint32_t offset = 0u;
-                for (; offset + 4u <= clut_bytes; offset += 4u) {
-                    const std::uint32_t word = static_cast<std::uint32_t>(clut[offset]) |
-                        (static_cast<std::uint32_t>(clut[offset + 1u]) << 8u) |
-                        (static_cast<std::uint32_t>(clut[offset + 2u]) << 16u) |
-                        (static_cast<std::uint32_t>(clut[offset + 3u]) << 24u);
-                    checksum ^= word;
-                    checksum *= 16777619u;
-                }
-                if (offset < clut_bytes) {
-                    std::uint32_t tail = clut[offset];
-                    if (offset + 1u < clut_bytes) tail |= static_cast<std::uint32_t>(clut[offset + 1u]) << 8u;
-                    checksum ^= tail;
-                    checksum *= 16777619u;
-                }
-                gpu_draw.clut_checksum = checksum;
-            }
-        }
+        write_clut_checksum(memory, gpu_draw);
         ge_gpu_backend_prepare_texture_keys(gpu_draw);
         gpu_draw.texture_content_signature = 0u;
         if (gpu_draw.texture_enabled && ge_gpu_backend_texture_signature_needed(gpu_draw)) {
@@ -4283,20 +4811,6 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
         ge_gpu_backend_record_draw(gpu_draw);
         if (!gpu_draw.clear_mode && primitive >= 3u && primitive <= 6u)
             fps_overlay_observe_draw(gpu_draw, count);
-        if (!gpu_draw.through && !gpu_draw.clear_mode &&
-            primitive >= 3u && primitive <= 5u) {
-            const std::array<float, 6> cloud_viewport{
-                decode_float24(data24(commands[0x42u])),
-                decode_float24(data24(commands[0x43u])),
-                decode_float24(data24(commands[0x45u])),
-                decode_float24(data24(commands[0x46u])),
-                static_cast<float>(data24(commands[0x4Cu]) & 0xFFFFu) / 16.0f,
-                static_cast<float>(data24(commands[0x4Du]) & 0xFFFFu) / 16.0f};
-            const std::array<float, 3> cloud_camera_position{};
-            ge_gpu_backend_observe_camera(transform.view, transform.projection,
-                                          cloud_viewport, cloud_camera_position,
-                                          gpu_draw, count);
-        }
     }
     }
     const std::uint32_t isize = index_size(layout.index_type);
@@ -4319,6 +4833,7 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
 
     const bool gpu_only_triangle_path = gpu_backend_enabled && software_raster_skipped(commands);
 
+    {
     if (gpu_backend_enabled && gpu_draw.texture_enabled &&
         ge_gpu_backend_texture_needed(gpu_draw) &&
         !ge_gpu_backend_adopt_shared_texture(gpu_draw)) {
@@ -4375,6 +4890,7 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
         } else {
             (void)ge_gpu_backend_upload_decoded_texture(gpu_draw, 0u, 0u, {});
         }
+    }
     }
 
     static const bool hw_lit_enabled = [] {
@@ -4554,10 +5070,12 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
             bool needs_indices = true;
             const bool identity_indexed_triangle_list = indexed && sequential_index_stream &&
                 contiguous_decode && contiguous_first == first_index_value && decode_count == count;
-            if (direct_nonindexed_gpu_draw_enabled() &&
-                (primitive == 3u || primitive == 4u) &&
+            // A non-indexed list or strip is already in draw order. An index
+            // buffer of 0,1,2,... is the same draw and costs a write per vertex.
+            if ((primitive == 3u || primitive == 4u) &&
                 (primitive != 3u || (count % 3u) == 0u) && decode_count == count &&
-                (!indexed || identity_indexed_triangle_list)) {
+                (!indexed || (direct_nonindexed_gpu_draw_enabled() &&
+                              identity_indexed_triangle_list))) {
                 needs_indices = false;
             }
             if (needs_indices) {
@@ -4592,6 +5110,19 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
                     static_cast<std::uint32_t>(decode_count), triangle_indices);
             }
             if (accepted) {
+                const bool repeatable = !indexed && triangle_indices.empty() &&
+                    (primitive == 3u || primitive == 4u) && layout.type == 0x000115u &&
+                    !flat_shading && !gpu_draw.clear_mode &&
+                    decode_count == count && draw_state_revision != 0u;
+                if (repeatable) {
+                    PackedRepeat &repeat = packed_repeat();
+                    repeat.ready = true;
+                    repeat.lit = hw.vertex_color_affine;
+                    repeat.revision = pipeline_revision_slot();
+                    repeat.material_revision = ge_material_revision();
+                    repeat.draw = effective_draw;
+                    if (repeat.lit) repeat.lighting = prepared_lighting;
+                }
                 advance_stream();
                 return true;
             }
