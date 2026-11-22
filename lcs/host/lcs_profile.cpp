@@ -1833,19 +1833,6 @@ void cap_frame_rate(std::uint32_t list_address) {
 bool g_ge_list_since_finish = false;
 std::uint32_t g_ge_last_list_address = 0u;
 
-void execute_ge_list_frame(psprecomp::Runtime &rt, std::uint32_t list_address, std::uint64_t vblank) {
-    const perf::Scope perf_scope(perf::kGeListUs);
-    if (g_ge_list_since_finish && list_address != g_ge_last_list_address) {
-        // Not the image the window keeps.
-        ge_finish_shows_this_frame() = false;
-        (void)ge_gpu_backend_finish_color_frame(vblank);
-        ge_finish_shows_this_frame() = true;
-    }
-    execute_ge_list_rendered(rt.memory(), list_address);
-    g_ge_list_since_finish = true;
-    g_ge_last_list_address = list_address;
-}
-
 void present_frame(psprecomp::Runtime &rt, const PresentRequest &request) {
     std::uint32_t present_buffer = request.display_buffer;
     std::uint32_t present_stride = request.display_stride;
@@ -4619,6 +4606,22 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             const std::uint64_t second = load(ctx.gpr[5]);
             ctx.set_gpr(2, first < second ? 0xFFFFFFFFu : (first > second ? 1u : 0u));
         });
+}
+
+void execute_ge_list_frame(psprecomp::Runtime &rt, std::uint32_t list_address, std::uint64_t vblank) {
+    const perf::Scope perf_scope(perf::kGeListUs);
+    if (g_ge_list_since_finish && list_address != g_ge_last_list_address) {
+        // PPSSPP runs the next display list without submitting the frame.
+        // The present finish records both lists. A crowded list still submits.
+        if (!ge_gpu_backend_defer_list_split()) {
+            ge_finish_shows_this_frame() = false;
+            (void)ge_gpu_backend_finish_color_frame(vblank);
+            ge_finish_shows_this_frame() = true;
+        }
+    }
+    execute_ge_list_rendered(rt.memory(), list_address);
+    g_ge_list_since_finish = true;
+    g_ge_last_list_address = list_address;
 }
 
 }

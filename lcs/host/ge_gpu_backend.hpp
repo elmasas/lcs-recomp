@@ -391,6 +391,14 @@ void ge_gpu_backend_accumulate_hardware_triangles(
     std::uint32_t vertex_count,
     std::span<const std::uint32_t> triangle_indices) noexcept;
 
+// One lock for a repeated non-indexed packed draw. False changes no counters
+// and no geometry, so the caller can take the full path.
+[[nodiscard]] bool ge_gpu_backend_repeat_packed_0115(
+    const GeGpuDrawDescriptor &draw,
+    const GeGpuHardwareTransform &transform,
+    std::span<const std::byte> packed_vertices,
+    std::uint32_t vertex_count) noexcept;
+
 void ge_gpu_backend_set_native_window(void *native_window) noexcept;
 
 void ge_gpu_backend_set_display_framebuffer(std::uint32_t address,
@@ -400,6 +408,16 @@ void ge_gpu_backend_set_display_framebuffer(std::uint32_t address,
 void ge_gpu_backend_display_logical_size(std::uint32_t &width, std::uint32_t &height) noexcept;
 
 [[nodiscard]] bool ge_gpu_backend_finish_color_frame(std::uint64_t vblank) noexcept;
+
+// Keep the pending draws for the present submit. Retires the clear generation
+// and the texture signatures so the next list still clears and rechecks.
+// False means the caller must submit now: the geometry or the draw slots
+// would not fit another list, or there is no command buffer to record into.
+[[nodiscard]] bool ge_gpu_backend_defer_list_split() noexcept;
+
+[[nodiscard]] std::uint64_t ge_gpu_backend_frame_epoch() noexcept;
+
+[[nodiscard]] std::uint64_t ge_gpu_backend_deferred_list_splits() noexcept;
 
 // The list-split flush sets this false. Only the present finish is shown.
 inline bool &ge_finish_shows_this_frame() noexcept {
@@ -447,5 +465,36 @@ inline GeGuestPresent &ge_guest_present() noexcept {
 void ge_gpu_backend_mark_window_presented() noexcept;
 
 [[nodiscard]] GeGpuBackendReport ge_gpu_backend_report();
+
+// Samples taken inside the real finish. Reset clears the counters and leaves fences alone.
+struct GeGpuFlightObservation {
+    bool saw_other_outstanding{false};
+    bool slot_written_only_after_complete{true};
+    std::uint32_t finish_records{0u};
+    std::uint32_t slot_reuses{0u};
+    std::uint32_t frames_in_flight_capacity{1u};
+    bool active{false};
+};
+
+struct GeGpuPipelineCacheObservation {
+    bool cache_non_null{false};
+    bool from_saved_blob{false};
+    bool graphics_pipeline_created{false};
+    std::uint64_t init_bytes{0u};
+    std::uint64_t empty_bytes{0u};
+    std::uintptr_t passed_cache{0u};
+};
+
+void ge_gpu_backend_reset_flight_observation() noexcept;
+// The presenter keeps the latest CPU readback. True also keeps each finished
+// frame until the flight observation is reset.
+void ge_gpu_backend_keep_completed_readbacks(bool keep) noexcept;
+[[nodiscard]] GeGpuFlightObservation ge_gpu_backend_flight_observation() noexcept;
+void ge_gpu_backend_set_pipeline_cache_file(const char *path) noexcept;
+[[nodiscard]] GeGpuPipelineCacheObservation ge_gpu_backend_pipeline_cache_observation() noexcept;
+[[nodiscard]] bool ge_gpu_backend_drain_flight() noexcept;
+[[nodiscard]] std::uint32_t ge_gpu_backend_completed_readback_count() noexcept;
+[[nodiscard]] bool ge_gpu_backend_copy_completed_readback(
+    std::uint32_t index, std::span<std::byte> destination) noexcept;
 
 }
